@@ -1,0 +1,45 @@
+From c07a8c654df59c3b41d0913b8c6dae70ccad50fb Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 12:50:08 +0800
+Subject: [PATCH 05/11] modified sbrk() syscall to only increase p->sz without
+ allocating physical pages
+
+---
+ kernel/sysproc.c | 19 ++++++++++++++++---
+ 1 file changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index c8c6546..be40f7a 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -40,11 +40,24 @@ sys_sbrk(void)
+ {
+   uint64 addr;
+   int n;
++  struct proc *p = myproc();
+ 
++  // get requested growth size from user registers
+   argint(0, &n);
+-  addr = myproc()->sz;
+-  if(growproc(n) < 0)
+-    return -1;
++
++  // save current process size
++  addr = p->sz;
++
++  // lazy allocation, increase virtual limit without allocating physical RAM
++  if(n > 0){
++    p->sz += n;
++  }
++  // if n is negative, shrink heap, free memory immediately
++  else if(n < 0){
++    p->sz = addr;
++    if(growproc(n) < 0)
++      return -1;
++  }
+   return addr;
+ }
+ 
+-- 
+2.53.0
+

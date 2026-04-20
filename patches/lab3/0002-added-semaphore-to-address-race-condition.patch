@@ -1,0 +1,64 @@
+From 4d78338b2cb9215eaf29b6e1acda5be6712ee064 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Wed, 1 Apr 2026 21:08:57 +0800
+Subject: [PATCH 2/4] added semaphore to address race condition
+
+---
+ user/race_test.c | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/user/race_test.c b/user/race_test.c
+index 0de434e..6435490 100644
+--- a/user/race_test.c
++++ b/user/race_test.c
+@@ -30,16 +30,18 @@ void sem_basic() {
+ 
+ void do_work(int pid, int semid) {
+     for (int i = 0; i < N; i++) {
+-        // TODO: increment a shared counter, making sure to use avoid race condition.
++        // increment a shared counter, making sure to use avoid race condition.
+         // Tip: use a semaphore.
++        sem_wait(semid);
+         int val = ucnt_get(0);
+         ucnt_set(0, val + 1);
++        sem_signal(semid);
+     }
+ }
+ 
+ void race_test() {
+     ucnt_set(0, 0);
+-    int semid = -1; // TODO: create semaphore properly
++    int semid = sem_init(1); // create semaphore properly
+ 
+     int pid = fork();
+     T_ASSERT(pid >= 0);
+@@ -56,7 +58,7 @@ void race_test() {
+     }
+ 
+     sem_free(semid);
+-}    
++}
+ 
+ struct buf_sem {
+     // TODO: add semaphores as required
+@@ -65,7 +67,7 @@ struct buf_sem {
+ void consumer(struct buf_sem b, int loops, int valid[]) {
+     char tmp;
+     for(int i = 0; i < loops; i++) {
+-        // TODO: wait buffer slot full and signal empty slot 
++        // TODO: wait buffer slot full and signal empty slot
+         tmp = ubuf_read();
+         T_ASSERT(valid[(unsigned char)tmp]);
+     }
+@@ -112,7 +114,7 @@ void producer_consumer() {
+ 
+ int main() {
+     sem_basic();
+-    
++
+     race_test();
+ 
+     producer_consumer();
+-- 
+2.53.0
+

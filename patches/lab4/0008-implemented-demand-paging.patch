@@ -1,0 +1,59 @@
+From af70f154d45dabf7550325753c789b5dfd76ef9b Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 14:45:37 +0800
+Subject: [PATCH 08/11] implemented demand paging
+
+---
+ kernel/trap.c | 29 ++++++++++++++++++++++++-----
+ 1 file changed, 24 insertions(+), 5 deletions(-)
+
+diff --git a/kernel/trap.c b/kernel/trap.c
+index 442c105..11a74cf 100644
+--- a/kernel/trap.c
++++ b/kernel/trap.c
+@@ -74,18 +74,37 @@ usertrap(void)
+   /* Exercise
+    * - Modify the trap handler so that page faults print the offending virtual
+    *   address before terminating the process.
+-
+-   * printf("User page fault detected, offending virtual address: %p\n",
+-   * (void *)r_stval());
+-   * p->killed = 1;
+    */
+ 
++    printf("User page fault detected, offending virtual address: %p\n",
++    (void *)r_stval());
++    // p->killed = 1;
++
+     // r_stval, virtual address that failed
+     uint64 va = r_stval();
+     // check if it is a valid lazy page within bounds
+     if(va > 0 && va < p->sz){
+       printf("Valid lazy page fault caught at va :%p\n", (void *)va);
+-      // TODO kalloc, mappages
++
++      // align virtual address to the start of page boundary
++      uint64 va_page = PGROUNDDOWN(va);
++      // allocate physical page of RAM
++      char *pa = kalloc();
++      // check if there is enough physical RAM
++      if(pa == 0){
++        p->killed =1;
++      } else {
++        // Zero physical page
++        memset(pa, 0, PGSIZE);
++
++        // map physical page into process' page table, and set RWU flags
++        if(mappages(p->pagetable, va_page, PGSIZE, (uint64)pa,
++        PTE_W|PTE_R|PTE_U) != 0){
++        // if mapping fails, free the physical page
++          kfree(pa);
++          p->killed =1;
++        }
++      }
+     } else {
+       printf("Invalid page fault at va :%p\n", (void *)va);
+       p->killed = 1;
+-- 
+2.53.0
+

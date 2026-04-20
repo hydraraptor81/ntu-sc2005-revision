@@ -1,0 +1,238 @@
+From 94e734dcbdbcddad547094d23779ab4dd133e002 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Wed, 1 Apr 2026 22:57:56 +0800
+Subject: [PATCH 1/4] added semaphore implementation
+
+---
+ kernel/semaphore.c | 36 +++++++++++++++++++++++++-----------
+ 1 file changed, 25 insertions(+), 11 deletions(-)
+
+diff --git a/kernel/semaphore.c b/kernel/semaphore.c
+index 2c83beb..9caa618 100644
+--- a/kernel/semaphore.c
++++ b/kernel/semaphore.c
+@@ -48,7 +48,7 @@ sem_free(int semid)
+ {
+   if(semid < 0 || semid >= MAX_SEMAPHORES)
+     return -1;
+-  
++
+   acquire(&sem_table_lock);
+   semaphores[semid].in_use = 0;
+   release(&sem_table_lock);
+@@ -61,11 +61,17 @@ sem_wait(int semid)
+ {
+   if(semid < 0 || semid >= MAX_SEMAPHORES || !semaphores[semid].in_use)
+     return -1;
+- 
+-  // TODO Retrieve semaphore: uncomment below
+-  // struct semaphore *sem = &semaphores[semid];
+-  // TODO sleep while semaphore is zero
+-  // TODO decrement semaphore value atomically
++
++  // Retrieve semaphore: uncomment below
++  struct semaphore *sem = &semaphores[semid];
++  // sleep while semaphore is zero
++  acquire(&sem->lock);
++  while(sem->value == 0) {
++    sleep(&sem->value, &sem->lock);
++  }
++  // decrement semaphore value atomically
++  sem->value--;
++  release(&sem->lock);
+   return 0;
+ }
+ 
+@@ -75,9 +81,13 @@ sem_signal(int semid)
+   if(semid < 0 || semid >= MAX_SEMAPHORES || !semaphores[semid].in_use)
+     return -1;
+ 
+-  // TODO Retrieve semaphore: uncomment below
+-  // struct semaphore *sem = &semaphores[semid];
+-  // TODO increment semaphore value atomically, notifying sleeping processes
++  // Retrieve semaphore
++  struct semaphore *sem = &semaphores[semid];
++  acquire(&sem->lock);
++  // increment semaphore value atomically, notifying sleeping processes
++  sem->value++;
++  wakeup(&sem->value);
++  release(&sem->lock);
+   return 0;
+ }
+ 
+@@ -86,6 +96,10 @@ sem_getvalue(int semid)
+ {
+   if(semid < 0 || semid >= MAX_SEMAPHORES || !semaphores[semid].in_use)
+     return -1;
+-  // TODO return value of semid atomically
+-  return -1;
++  // return value of semid atomically
++  struct semaphore *sem = &semaphores[semid];
++  acquire(&sem->lock);
++  int val = sem->value;
++  release(&sem->lock);
++  return val;
+ }
+-- 
+2.53.0
+
+From 4d78338b2cb9215eaf29b6e1acda5be6712ee064 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Wed, 1 Apr 2026 21:08:57 +0800
+Subject: [PATCH 2/4] added semaphore to address race condition
+
+---
+ user/race_test.c | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/user/race_test.c b/user/race_test.c
+index 0de434e..6435490 100644
+--- a/user/race_test.c
++++ b/user/race_test.c
+@@ -30,16 +30,18 @@ void sem_basic() {
+ 
+ void do_work(int pid, int semid) {
+     for (int i = 0; i < N; i++) {
+-        // TODO: increment a shared counter, making sure to use avoid race condition.
++        // increment a shared counter, making sure to use avoid race condition.
+         // Tip: use a semaphore.
++        sem_wait(semid);
+         int val = ucnt_get(0);
+         ucnt_set(0, val + 1);
++        sem_signal(semid);
+     }
+ }
+ 
+ void race_test() {
+     ucnt_set(0, 0);
+-    int semid = -1; // TODO: create semaphore properly
++    int semid = sem_init(1); // create semaphore properly
+ 
+     int pid = fork();
+     T_ASSERT(pid >= 0);
+@@ -56,7 +58,7 @@ void race_test() {
+     }
+ 
+     sem_free(semid);
+-}    
++}
+ 
+ struct buf_sem {
+     // TODO: add semaphores as required
+@@ -65,7 +67,7 @@ struct buf_sem {
+ void consumer(struct buf_sem b, int loops, int valid[]) {
+     char tmp;
+     for(int i = 0; i < loops; i++) {
+-        // TODO: wait buffer slot full and signal empty slot 
++        // TODO: wait buffer slot full and signal empty slot
+         tmp = ubuf_read();
+         T_ASSERT(valid[(unsigned char)tmp]);
+     }
+@@ -112,7 +114,7 @@ void producer_consumer() {
+ 
+ int main() {
+     sem_basic();
+-    
++
+     race_test();
+ 
+     producer_consumer();
+-- 
+2.53.0
+
+From 88dd1dbcb20ee04c7fb8861b5bcbd40fab82097d Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Wed, 1 Apr 2026 21:21:16 +0800
+Subject: [PATCH 3/4] implement producer consumer problem
+
+---
+ user/race_test.c | 20 +++++++++++++++-----
+ 1 file changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/user/race_test.c b/user/race_test.c
+index 6435490..dec7ecb 100644
+--- a/user/race_test.c
++++ b/user/race_test.c
+@@ -61,22 +61,27 @@ void race_test() {
+ }
+ 
+ struct buf_sem {
+-    // TODO: add semaphores as required
++    // add semaphores as required
++    int sem_empty; // track empty slots, initially 1
++    int sem_full;  // track full slots, initially 0
+ };
+ 
+ void consumer(struct buf_sem b, int loops, int valid[]) {
+     char tmp;
+     for(int i = 0; i < loops; i++) {
+-        // TODO: wait buffer slot full and signal empty slot
++        sem_wait(b.sem_full);
+         tmp = ubuf_read();
++        sem_signal(b.sem_empty);
+         T_ASSERT(valid[(unsigned char)tmp]);
+     }
+ }
+ 
+ void producer(const char* msg, struct buf_sem b) {
+     for (const char* p = msg; *p != '\0'; p++) {
+-        // TODO: wait buffer slot emtpy and signal used slot
++        // wait buffer slot emtpy and signal used slot
++        sem_wait(b.sem_empty);
+         ubuf_write(*p);
++        sem_signal(b.sem_full);
+     }
+ }
+ 
+@@ -91,7 +96,10 @@ void producer_consumer() {
+     }
+ 
+     struct buf_sem b;
+-    // TODO init semaphores as required
++    // init semaphores as required
++    b.sem_empty = sem_init(1);
++    b.sem_full =  sem_init(0);
++    T_ASSERT(b.sem_empty >= 0 && b.sem_full >= 0);
+ 
+     for (int i = 0; i < NUM_PROD; i++) {
+         int pid = fork();
+@@ -107,7 +115,9 @@ void producer_consumer() {
+         wait(0);
+     }
+     printf("[producer_consumer] PASS: message delivered\n");
+-    // TODO clean-up semaphores
++    // clean-up semaphores
++    sem_free(b.sem_empty);
++    sem_free(b.sem_full);
+ }
+ 
+ 
+-- 
+2.53.0
+
+From cea42dd22cebd9249465264fa0ad1009479caf5d Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Thu, 2 Apr 2026 00:47:26 +0800
+Subject: [PATCH 4/4] changed MSG_SIZE to MSG_SIZE+1 to ensure string is null
+ terminated
+
+---
+ user/race_test.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/user/race_test.c b/user/race_test.c
+index dec7ecb..efa1ffa 100644
+--- a/user/race_test.c
++++ b/user/race_test.c
+@@ -87,7 +87,7 @@ void producer(const char* msg, struct buf_sem b) {
+ 
+ void producer_consumer() {
+     #define MSG_SIZE 48
+-    const char msg[MSG_SIZE] = "cafefacefacefacefacefacefacefacefacecafecafecafe";
++    const char msg[MSG_SIZE +1] = "cafefacefacefacefacefacefacefacefacecafecafecafe";
+     const int NUM_PROD = 2;
+     int valid[256] = {0};
+     for (const char* p = msg; *p != '\0'; p++) {
+-- 
+2.53.0
+

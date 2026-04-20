@@ -1,0 +1,181 @@
+From c63ad88345079a61c330eb7e7f915b5fea9f9621 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Wed, 18 Mar 2026 14:57:44 +0800
+Subject: [PATCH 2/5] added ps and pstree
+
+---
+ Makefile         | 10 ++++++----
+ kernel/proc.h    |  9 +++++++++
+ kernel/syscall.c |  2 ++
+ kernel/syscall.h |  1 +
+ kernel/sysproc.c | 32 ++++++++++++++++++++++++++++++++
+ user/user.h      | 10 ++++++++++
+ user/usys.pl     |  3 ++-
+ 7 files changed, 62 insertions(+), 5 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index caa35f9..fb468a9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -32,7 +32,7 @@ OBJS = \
+ 
+ # riscv64-unknown-elf- or riscv64-linux-gnu-
+ # perhaps in /opt/riscv/bin
+-#TOOLPREFIX = 
++#TOOLPREFIX =
+ 
+ # Try to infer the correct TOOLPREFIX if not set
+ ifndef TOOLPREFIX
+@@ -84,7 +84,7 @@ endif
+ LDFLAGS = -z max-page-size=4096
+ 
+ $K/kernel: $(OBJS) $K/kernel.ld $U/initcode
+-	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
++	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS)
+ 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
+ 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
+ 
+@@ -148,14 +148,16 @@ UPROGS=\
+ 	$U/_grind\
+ 	$U/_wc\
+ 	$U/_zombie\
+-	$U/_uthread_test
++	$U/_uthread_test\
++	$U/_ps\
++	$U/_pstree\
+ 
+ fs.img: mkfs/mkfs README $(UPROGS)
+ 	mkfs/mkfs fs.img README $(UPROGS)
+ 
+ -include kernel/*.d user/*.d
+ 
+-clean: 
++clean:
+ 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
+ 	*/*.o */*.d */*.asm */*.sym \
+ 	$U/initcode $U/initcode.out $K/kernel fs.img \
+diff --git a/kernel/proc.h b/kernel/proc.h
+index d021857..f5be8bf 100644
+--- a/kernel/proc.h
++++ b/kernel/proc.h
+@@ -105,3 +105,12 @@ struct proc {
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
+ };
++
++extern struct proc proc[NPROC];
++
++struct procinfo {
++  int pid;
++  int state;
++  int ppid;
++  char name[16];
++};
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index ed65409..d1eb730 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -101,6 +101,7 @@ extern uint64 sys_unlink(void);
+ extern uint64 sys_link(void);
+ extern uint64 sys_mkdir(void);
+ extern uint64 sys_close(void);
++extern uint64 sys_ps(void);
+ 
+ // An array mapping syscall numbers from syscall.h
+ // to the function that handles the system call.
+@@ -126,6 +127,7 @@ static uint64 (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_ps]      sys_ps,
+ };
+ 
+ void
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index bc5f356..8b87c0a 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -20,3 +20,4 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_ps     23
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index 458adf8..beef973 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -92,3 +92,35 @@ sys_uptime(void)
+   release(&tickslock);
+   return xticks;
+ }
++
++uint64
++sys_ps(void)
++{
++  struct proc *p;
++  struct procinfo info[NPROC];
++  uint64 addr;
++  int max, n = 0;
++
++  argaddr(0, &addr);
++  argint(1, &max);
++
++  if(max > NPROC)
++    max = NPROC;
++
++  for(p = proc; p < &proc[NPROC] && n < max; p++){
++    acquire(&p->lock);
++    if(p->state != UNUSED){
++      info[n].pid = p->pid;
++      info[n].state = p->state;
++      info[n].ppid = (p->parent) ? p->parent->pid : -1;
++      safestrcpy(info[n].name, p->name, sizeof(info[n].name));
++      n++;
++    }
++    release(&p->lock);
++  }
++
++  if(copyout(myproc()->pagetable, addr, (char*)info, n*sizeof(struct procinfo)) < 0)
++    return -1;
++
++  return n;
++}
+diff --git a/user/user.h b/user/user.h
+index bdc9a01..fe0e599 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -49,3 +49,13 @@ void thread_init(void);
+ void thread_create(void (*func)());
+ void thread_yield(void);
+ void thread_exit(void);
++
++// procinfo struct
++
++struct procinfo {
++  int pid;
++  int state;
++  int ppid;
++  char name[16];
++};
++int ps(struct procinfo*, int);
+diff --git a/user/usys.pl b/user/usys.pl
+index 01e426e..d6466f2 100755
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -14,7 +14,7 @@ sub entry {
+     print " ecall\n";
+     print " ret\n";
+ }
+-	
++
+ entry("fork");
+ entry("exit");
+ entry("wait");
+@@ -36,3 +36,4 @@ entry("getpid");
+ entry("sbrk");
+ entry("sleep");
+ entry("uptime");
++entry("ps");
+-- 
+2.53.0
+

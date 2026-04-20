@@ -1,0 +1,877 @@
+From 2a5eb642f43fbeea47b9056dcdd4579ddd902e9e Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Wed, 18 Mar 2026 14:16:10 +0800
+Subject: [PATCH 1/5] printf debug statements
+
+---
+ kernel/exec.c    |  6 ++++--
+ kernel/proc.c    | 56 +++++++++++++++++++++++++++++++++++++++++-------
+ kernel/sysproc.c |  1 +
+ kernel/trap.c    | 33 ++++++++++++++++++++++------
+ user/sh.c        |  3 ++-
+ 5 files changed, 82 insertions(+), 17 deletions(-)
+
+diff --git a/kernel/exec.c b/kernel/exec.c
+index 6d7c452..582e973 100644
+--- a/kernel/exec.c
++++ b/kernel/exec.c
+@@ -31,6 +31,8 @@ exec(char *path, char **argv)
+   pagetable_t pagetable = 0, oldpagetable;
+   struct proc *p = myproc();
+ 
++  // Debug: exec loading program
++  printf("exec: pid=%d loading %s\n", myproc()->pid, path);
+   begin_op();
+ 
+   if((ip = namei(path)) == 0){
+@@ -119,7 +121,7 @@ exec(char *path, char **argv)
+     if(*s == '/')
+       last = s+1;
+   safestrcpy(p->name, last, sizeof(p->name));
+-    
++
+   // Commit to the user image.
+   oldpagetable = p->pagetable;
+   p->pagetable = pagetable;
+@@ -161,6 +163,6 @@ loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz
+     if(readi(ip, 0, (uint64)pa, offset+i, n) != n)
+       return -1;
+   }
+-  
++
+   return 0;
+ }
+diff --git a/kernel/proc.c b/kernel/proc.c
+index d280acf..ba06660 100644
+--- a/kernel/proc.c
++++ b/kernel/proc.c
+@@ -33,7 +33,7 @@ void
+ proc_mapstacks(pagetable_t kpgtbl)
+ {
+   struct proc *p;
+-  
++
+   for(p = proc; p < &proc[NPROC]; p++) {
+     char *pa = kalloc();
+     if(pa == 0)
+@@ -48,7 +48,7 @@ void
+ procinit(void)
+ {
+   struct proc *p;
+-  
++
+   initlock(&pid_lock, "nextpid");
+   initlock(&wait_lock, "wait_lock");
+   for(p = proc; p < &proc[NPROC]; p++) {
+@@ -93,7 +93,7 @@ int
+ allocpid()
+ {
+   int pid;
+-  
++
+   acquire(&pid_lock);
+   pid = nextpid;
+   nextpid = nextpid + 1;
+@@ -144,6 +144,8 @@ found:
+   // which returns to user space.
+   memset(&p->context, 0, sizeof(p->context));
+   p->context.ra = (uint64)forkret;
++  // Debug,
++  printf("allocproc: pid=%d context.ra set to %p (forkret)\n", p->pid, forkret);
+   p->context.sp = p->kstack + PGSIZE;
+ 
+   return p;
+@@ -236,7 +238,7 @@ userinit(void)
+ 
+   p = allocproc();
+   initproc = p;
+-  
++
+   // allocate one user page and copy initcode's instructions
+   // and data into it.
+   uvmfirst(p->pagetable, initcode, sizeof(initcode));
+@@ -283,17 +285,35 @@ fork(void)
+   struct proc *np;
+   struct proc *p = myproc();
+ 
++  // Debug: list parent pid, name and state
++  printf("fork: parent pid=%d, name=%s, state=%d\n",
++          p->pid, p->name, p->state);
++
+   // Allocate process.
+   if((np = allocproc()) == 0){
++    // Debug: allocation failed
++    printf("fork: allocproc failed for parent pid=%d\n", p->pid);
+     return -1;
+   }
+ 
++  // Debug: allocproc succeeded
++  printf("fork: allocproc succeeded for parent pid=%d\n", p->pid);
++  // Debug: print child's pid
++  printf("fork: child allocated pid=%d\n", np->pid);
++
+   // Copy user memory from parent to child.
+   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
++    // Debug: memory copy failed
++    printf("fork: uvmcopy failed parent=%d, child=%d\n",
++            p->pid, np->pid);
+     freeproc(np);
+     release(&np->lock);
+     return -1;
+   }
++
++  // Debug: uvmcopy succeeded
++  printf("fork: uvmcopy succeeded for parent pid=%d\n", p->pid);
++  // copies process memory size of parent to child (ensure child within bounds)
+   np->sz = p->sz;
+ 
+   // copy saved user registers.
+@@ -312,6 +332,10 @@ fork(void)
+ 
+   pid = np->pid;
+ 
++  // Debug: child setup complete
++  printf("fork: child pid=%d fully initialized, parent=%d\n",
++         np->pid, p->pid);
++
+   release(&np->lock);
+ 
+   acquire(&wait_lock);
+@@ -322,6 +346,10 @@ fork(void)
+   np->state = RUNNABLE;
+   release(&np->lock);
+ 
++  // Debug: returning child pid to parent
++  printf("fork: returning child pid=%d to parent pid=%d\n",
++         pid, p->pid);
++
+   return pid;
+ }
+ 
+@@ -372,7 +400,7 @@ exit(int status)
+ 
+   // Parent might be sleeping in wait().
+   wakeup(p->parent);
+-  
++
+   acquire(&p->lock);
+ 
+   p->xstate = status;
+@@ -428,7 +456,7 @@ wait(uint64 addr)
+       release(&wait_lock);
+       return -1;
+     }
+-    
++
+     // Wait for a child to exit.
+     sleep(p, &wait_lock);  //DOC: wait-sleep
+   }
+@@ -446,6 +474,8 @@ scheduler(void)
+ {
+   struct proc *p;
+   struct cpu *c = mycpu();
++  // track printed PIDS
++  static int first_done[NPROC] = {0};
+ 
+   c->proc = 0;
+   for(;;){
+@@ -464,6 +494,13 @@ scheduler(void)
+         // Switch to chosen process.  It is the process's job
+         // to release its lock and then reacquire it
+         // before jumping back to us.
++
++        // Debug
++        if(p->pid < 64 && !first_done[p->pid]){
++          first_done[p->pid] = 1;
++          printf("kernel/proc.c: scheduler() selects new process [pid=%d]\n", p->pid);
++          printf("kernel/proc.c: calling swtch() to start new context\n");
++        }
+         p->state = RUNNING;
+         c->proc = p;
+         swtch(&c->context, &p->context);
+@@ -525,6 +562,9 @@ yield(void)
+ void
+ forkret(void)
+ {
++  // Debug: forkret entry
++  printf("forkret: pid=%d returning to userspace\n", myproc()->pid);
++
+   static int first = 1;
+ 
+   // Still holding p->lock from scheduler.
+@@ -550,7 +590,7 @@ void
+ sleep(void *chan, struct spinlock *lk)
+ {
+   struct proc *p = myproc();
+-  
++
+   // Must acquire p->lock in order to
+   // change p->state and then call sched.
+   // Once we hold p->lock, we can be
+@@ -629,7 +669,7 @@ int
+ killed(struct proc *p)
+ {
+   int k;
+-  
++
+   acquire(&p->lock);
+   k = p->killed;
+   release(&p->lock);
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index 3b4d5bd..458adf8 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -24,6 +24,7 @@ sys_getpid(void)
+ uint64
+ sys_fork(void)
+ {
++  printf("sys_fork: called from pid %d\n", myproc()->pid);
+   return fork();
+ }
+ 
+diff --git a/kernel/trap.c b/kernel/trap.c
+index d454a7d..d237818 100644
+--- a/kernel/trap.c
++++ b/kernel/trap.c
+@@ -46,10 +46,18 @@ usertrap(void)
+   w_stvec((uint64)kernelvec);
+ 
+   struct proc *p = myproc();
+-  
++
++  // Debug
++
++  /*
++   * static int trap_count = 0;
++   * if(r_scause() == 8 && p->trapframe->a7 == SYS_fork && trap_count++ < 5)
++   * printf("trap.c: usertrap() entered for fork, sepc=%p\n", r_sepc());
++   */
++
+   // save user program counter.
+   p->trapframe->epc = r_sepc();
+-  
++
+   if(r_scause() == 8){
+     // system call
+ 
+@@ -64,6 +72,11 @@ usertrap(void)
+     // so enable only now that we're done with those registers.
+     intr_on();
+ 
++    // Debug: before syscall, print supervisor cause register, and syscall no.
++    /*
++     * printf("trap.c: usertrap() -> syscall(), scause=%p\n", r_scause());
++     * printf("trap.c: about to call syscall(), a7=%d\n", p->trapframe->a7);
++     */
+     syscall();
+   } else if((which_dev = devintr()) != 0){
+     // ok
+@@ -90,6 +103,14 @@ void
+ usertrapret(void)
+ {
+   struct proc *p = myproc();
++  // Debug: entering usertrapret
++  if(strncmp(p->name, "sh", 2) == 0 || strncmp(p->name, "ls", 2) == 0) {
++    static int done[64] = {0};
++    if(p->pid < 64 && !done[p->pid]) {
++      done[p->pid] = 1;
++      printf("trap: usertrapret() pid=%d, name=%s\n", p->pid, p->name);
++    }
++  }
+ 
+   // we're about to switch the destination of traps from
+   // kerneltrap() to usertrap(), so turn off interrupts until
+@@ -109,7 +130,7 @@ usertrapret(void)
+ 
+   // set up the registers that trampoline.S's sret will use
+   // to get to user space.
+-  
++
+   // set S Previous Privilege mode to User.
+   unsigned long x = r_sstatus();
+   x &= ~SSTATUS_SPP; // clear SPP to 0 for user mode
+@@ -122,7 +143,7 @@ usertrapret(void)
+   // tell trampoline.S the user page table to switch to.
+   uint64 satp = MAKE_SATP(p->pagetable);
+ 
+-  // jump to userret in trampoline.S at the top of memory, which 
++  // jump to userret in trampoline.S at the top of memory, which
+   // switches to the user page table, restores user registers,
+   // and switches to user mode with sret.
+   uint64 trampoline_userret = TRAMPOLINE + (userret - trampoline);
+@@ -131,14 +152,14 @@ usertrapret(void)
+ 
+ // interrupts and exceptions from kernel code go here via kernelvec,
+ // on whatever the current kernel stack is.
+-void 
++void
+ kerneltrap()
+ {
+   int which_dev = 0;
+   uint64 sepc = r_sepc();
+   uint64 sstatus = r_sstatus();
+   uint64 scause = r_scause();
+-  
++
+   if((sstatus & SSTATUS_SPP) == 0)
+     panic("kerneltrap: not from supervisor mode");
+   if(intr_get() != 0)
+diff --git a/user/sh.c b/user/sh.c
+index 836ebcb..35e49ab 100644
+--- a/user/sh.c
++++ b/user/sh.c
+@@ -183,8 +183,9 @@ int
+ fork1(void)
+ {
+   int pid;
+-
++  fprintf(2, "sh.c: fork() called, pid=%d\n", getpid());
+   pid = fork();
++  fprintf(2, "sh.c: fork() returned, pid=%d, child=%d\n", getpid(), pid);
+   if(pid == -1)
+     panic("fork");
+   return pid;
+-- 
+2.53.0
+
+From c63ad88345079a61c330eb7e7f915b5fea9f9621 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Wed, 18 Mar 2026 14:57:44 +0800
+Subject: [PATCH 2/5] added ps and pstree
+
+---
+ Makefile         | 10 ++++++----
+ kernel/proc.h    |  9 +++++++++
+ kernel/syscall.c |  2 ++
+ kernel/syscall.h |  1 +
+ kernel/sysproc.c | 32 ++++++++++++++++++++++++++++++++
+ user/user.h      | 10 ++++++++++
+ user/usys.pl     |  3 ++-
+ 7 files changed, 62 insertions(+), 5 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index caa35f9..fb468a9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -32,7 +32,7 @@ OBJS = \
+ 
+ # riscv64-unknown-elf- or riscv64-linux-gnu-
+ # perhaps in /opt/riscv/bin
+-#TOOLPREFIX = 
++#TOOLPREFIX =
+ 
+ # Try to infer the correct TOOLPREFIX if not set
+ ifndef TOOLPREFIX
+@@ -84,7 +84,7 @@ endif
+ LDFLAGS = -z max-page-size=4096
+ 
+ $K/kernel: $(OBJS) $K/kernel.ld $U/initcode
+-	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
++	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS)
+ 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
+ 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
+ 
+@@ -148,14 +148,16 @@ UPROGS=\
+ 	$U/_grind\
+ 	$U/_wc\
+ 	$U/_zombie\
+-	$U/_uthread_test
++	$U/_uthread_test\
++	$U/_ps\
++	$U/_pstree\
+ 
+ fs.img: mkfs/mkfs README $(UPROGS)
+ 	mkfs/mkfs fs.img README $(UPROGS)
+ 
+ -include kernel/*.d user/*.d
+ 
+-clean: 
++clean:
+ 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
+ 	*/*.o */*.d */*.asm */*.sym \
+ 	$U/initcode $U/initcode.out $K/kernel fs.img \
+diff --git a/kernel/proc.h b/kernel/proc.h
+index d021857..f5be8bf 100644
+--- a/kernel/proc.h
++++ b/kernel/proc.h
+@@ -105,3 +105,12 @@ struct proc {
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
+ };
++
++extern struct proc proc[NPROC];
++
++struct procinfo {
++  int pid;
++  int state;
++  int ppid;
++  char name[16];
++};
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index ed65409..d1eb730 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -101,6 +101,7 @@ extern uint64 sys_unlink(void);
+ extern uint64 sys_link(void);
+ extern uint64 sys_mkdir(void);
+ extern uint64 sys_close(void);
++extern uint64 sys_ps(void);
+ 
+ // An array mapping syscall numbers from syscall.h
+ // to the function that handles the system call.
+@@ -126,6 +127,7 @@ static uint64 (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_ps]      sys_ps,
+ };
+ 
+ void
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index bc5f356..8b87c0a 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -20,3 +20,4 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_ps     23
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index 458adf8..beef973 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -92,3 +92,35 @@ sys_uptime(void)
+   release(&tickslock);
+   return xticks;
+ }
++
++uint64
++sys_ps(void)
++{
++  struct proc *p;
++  struct procinfo info[NPROC];
++  uint64 addr;
++  int max, n = 0;
++
++  argaddr(0, &addr);
++  argint(1, &max);
++
++  if(max > NPROC)
++    max = NPROC;
++
++  for(p = proc; p < &proc[NPROC] && n < max; p++){
++    acquire(&p->lock);
++    if(p->state != UNUSED){
++      info[n].pid = p->pid;
++      info[n].state = p->state;
++      info[n].ppid = (p->parent) ? p->parent->pid : -1;
++      safestrcpy(info[n].name, p->name, sizeof(info[n].name));
++      n++;
++    }
++    release(&p->lock);
++  }
++
++  if(copyout(myproc()->pagetable, addr, (char*)info, n*sizeof(struct procinfo)) < 0)
++    return -1;
++
++  return n;
++}
+diff --git a/user/user.h b/user/user.h
+index bdc9a01..fe0e599 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -49,3 +49,13 @@ void thread_init(void);
+ void thread_create(void (*func)());
+ void thread_yield(void);
+ void thread_exit(void);
++
++// procinfo struct
++
++struct procinfo {
++  int pid;
++  int state;
++  int ppid;
++  char name[16];
++};
++int ps(struct procinfo*, int);
+diff --git a/user/usys.pl b/user/usys.pl
+index 01e426e..d6466f2 100755
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -14,7 +14,7 @@ sub entry {
+     print " ecall\n";
+     print " ret\n";
+ }
+-	
++
+ entry("fork");
+ entry("exit");
+ entry("wait");
+@@ -36,3 +36,4 @@ entry("getpid");
+ entry("sbrk");
+ entry("sleep");
+ entry("uptime");
++entry("ps");
+-- 
+2.53.0
+
+From c18d13f620e31b2685db6705bcc5f836c5c7a766 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Wed, 18 Mar 2026 17:04:07 +0800
+Subject: [PATCH 3/5] FCFS and even PIDs scheduling
+
+---
+ kernel/proc.c | 114 ++++++++++++++++++++++++++++++++++++++++++++------
+ kernel/proc.h |   3 ++
+ 2 files changed, 104 insertions(+), 13 deletions(-)
+
+diff --git a/kernel/proc.c b/kernel/proc.c
+index ba06660..e41a596 100644
+--- a/kernel/proc.c
++++ b/kernel/proc.c
+@@ -124,6 +124,7 @@ allocproc(void)
+ found:
+   p->pid = allocpid();
+   p->state = USED;
++  p->ctime = ticks;
+ 
+   // Allocate a trapframe page.
+   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
+@@ -469,11 +470,15 @@ wait(uint64 addr)
+ //  - swtch to start running that process.
+ //  - eventually that process transfers control
+ //    via swtch back to the scheduler.
++
++
++#ifdef FCFS_SCHED
+ void
+ scheduler(void)
+ {
+   struct proc *p;
+   struct cpu *c = mycpu();
++  struct proc *oldest;
+   // track printed PIDS
+   static int first_done[NPROC] = {0};
+ 
+@@ -488,37 +493,120 @@ scheduler(void)
+     intr_off();
+ 
+     int found = 0;
++    oldest = 0;
+     for(p = proc; p < &proc[NPROC]; p++) {
+       acquire(&p->lock);
+       if(p->state == RUNNABLE) {
++        // printf("kernel/proc.c: scheduler() process with even pid=%d\n", p->pid);
+         // Switch to chosen process.  It is the process's job
+         // to release its lock and then reacquire it
+         // before jumping back to us.
+-
+-        // Debug
+-        if(p->pid < 64 && !first_done[p->pid]){
+-          first_done[p->pid] = 1;
+-          printf("kernel/proc.c: scheduler() selects new process [pid=%d]\n", p->pid);
+-          printf("kernel/proc.c: calling swtch() to start new context\n");
++        if(oldest == 0 || p->ctime < oldest->ctime) {
++          if(oldest != 0)
++            release(&oldest->lock);
++          oldest = p;
++          continue;
+         }
+-        p->state = RUNNING;
+-        c->proc = p;
+-        swtch(&c->context, &p->context);
+-
++      }
++      release(&p->lock);
++    }
++    if(oldest) {
++      // Debug
++      if(oldest->pid < 64 && !first_done[oldest->pid]){
++        first_done[oldest->pid] = 1;
++        printf("kernel/proc.c: scheduler() selects new process [pid=%d]\n",
++               oldest->pid);
++        printf("kernel/proc.c: calling swtch() to start new context\n");
++      }
++      oldest->state = RUNNING;
++      c->proc = oldest;
++      swtch(&c->context, &oldest->context);
+         // Process is done running for now.
+         // It should have changed its p->state before coming back.
+-        c->proc = 0;
+-        found = 1;
++      c->proc = 0;
++      release(&oldest->lock);
++      found = 1;
++    }
++    if(found == 0) {
++      // nothing to run; stop running on this core until an interrupt.
++      asm volatile("wfi");
++    }
++  }
++}
++#else
++void
++scheduler(void)
++{
++  struct proc *p;
++  struct cpu *c = mycpu();
++  struct proc *selected;
++  // track printed PIDS
++  static int first_done[NPROC] = {0};
++
++  c->proc = 0;
++  for(;;){
++    // The most recent process to run may have had interrupts
++    // turned off; enable them to avoid a deadlock if all
++    // processes are waiting. Then turn them back off
++    // to avoid a possible race between an interrupt
++    // and wfi.
++    intr_on();
++    intr_off();
++
++    int found = 0;
++    selected = 0;
++    // priortize even PIDs
++    for(p = proc; p < &proc[NPROC]; p++) {
++      acquire(&p->lock);
++      if(p->state == RUNNABLE && (p->pid % 2) == 0) {
++        // printf("kernel/proc.c: scheduler() process with even pid=%d\n", p->pid);
++        // Switch to chosen process.  It is the process's job
++        // to release its lock and then reacquire it
++        // before jumping back to us.
++        selected = p;
++        break;
+       }
+       release(&p->lock);
+     }
++    if(selected == 0) {
++      for(p = proc; p < &proc[NPROC]; p++) {
++        acquire(&p->lock);
++        if(p->state == RUNNABLE && (p->pid % 2) == 1) {
++          // printf("kernel/proc.c: scheduler() process with odd pid=%d\n", p->pid);
++          // Switch to chosen process.  It is the process's job
++          // to release its lock and then reacquire it
++          // before jumping back to us.
++          selected = p;
++          break;
++        }
++        release(&p->lock);
++      }
++    }
++    if(selected) {
++      // Debug
++      if(selected->pid < 64 && !first_done[selected->pid]){
++        first_done[selected->pid] = 1;
++        printf("kernel/proc.c: scheduler() selects new process [pid=%d]\n",
++               selected->pid);
++        printf("kernel/proc.c: calling swtch() to start new context\n");
++      }
++      selected->state = RUNNING;
++      c->proc = selected;
++      swtch(&c->context, &selected->context);
++
++        // Process is done running for now.
++        // It should have changed its p->state before coming back.
++      c->proc = 0;
++      release(&selected->lock);
++      found = 1;
++    }
+     if(found == 0) {
+       // nothing to run; stop running on this core until an interrupt.
+       asm volatile("wfi");
+     }
+   }
+ }
+-
++#endif
+ // Switch to scheduler.  Must hold only p->lock
+ // and have changed proc->state. Saves and restores
+ // intena because intena is a property of this
+diff --git a/kernel/proc.h b/kernel/proc.h
+index f5be8bf..a11d52c 100644
+--- a/kernel/proc.h
++++ b/kernel/proc.h
+@@ -104,6 +104,9 @@ struct proc {
+   struct file *ofile[NOFILE];  // Open files
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
++
++  // FCFS creation time
++  uint ctime;
+ };
+ 
+ extern struct proc proc[NPROC];
+-- 
+2.53.0
+
+From 093768400b98cbc9083c2ee09bdcf7ea62b55e63 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Wed, 18 Mar 2026 18:48:57 +0800
+Subject: [PATCH 4/5] user threading library
+
+---
+ user/uthread.c        | 43 ++++++++++++++++++++++++++++++++++++++-----
+ user/uthread_switch.S | 32 ++++++++++++++++++++++++++++++++
+ 2 files changed, 70 insertions(+), 5 deletions(-)
+
+diff --git a/user/uthread.c b/user/uthread.c
+index 0524c99..af5e111 100644
+--- a/user/uthread.c
++++ b/user/uthread.c
+@@ -11,16 +11,34 @@
+ #define MAX_THREAD  4
+ 
+ 
++struct context {
++  uint64 ra;      // Return address (x1)
++  uint64 sp;      // Stack pointer (x2)
++  uint64 s0;      // Saved registers / Frame pointer (x8)
++  uint64 s1;      // (x9)
++  uint64 s2;      // (x18)
++  uint64 s3;      // (x19)
++  uint64 s4;      // (x20)
++  uint64 s5;      // (x21)
++  uint64 s6;      // (x22)
++  uint64 s7;      // (x23)
++  uint64 s8;      // (x24)
++  uint64 s9;      // (x25)
++  uint64 s10;     // (x26)
++  uint64 s11;     // (x27)
++};
++
+ struct thread {
+   char       stack[STACK_SIZE]; /* the thread's stack */
+   int        state;             /* FREE, RUNNING, RUNNABLE */
+   // TODO: include context of thread
++  struct context context;
+ };
+ struct thread all_thread[MAX_THREAD];
+ struct thread *current_thread;
+ extern void thread_switch(uint64, uint64);
+-              
+-void 
++
++void
+ thread_init(void)
+ {
+   // main() is thread 0, which will make the first invocation to
+@@ -30,7 +48,7 @@ thread_init(void)
+   current_thread->state = RUNNING;
+ }
+ 
+-void 
++void
+ thread_schedule(void)
+ {
+   struct thread *t, *next_thread;
+@@ -59,11 +77,12 @@ thread_schedule(void)
+     current_thread = next_thread;
+     // TODO: invoke thread_switch to switch from t to next_thread:
+     // thread_switch(??, ??);
++    thread_switch(&t->context, &current_thread->context);
+   } else
+     next_thread = 0;
+ }
+ 
+-void 
++void
+ thread_create(void (*func)())
+ {
+   struct thread *t;
+@@ -71,12 +90,26 @@ thread_create(void (*func)())
+   for (t = all_thread; t < all_thread + MAX_THREAD; t++) {
+     if (t->state == FREE) break;
+   }
++  if (t >= all_thread + MAX_THREAD) {
++    printf("thread_create: no free threads\n");
++    exit(-1);
++  }
++
+   t->state = RUNNABLE;
++
+   // TODO: ensure `func` will be executed on its own stack
+   // ...
++  // Initialize context: zero out all saved registers
++  memset(&t->context, 0, sizeof(t->context));
++
++  // Set RA to the thread function so thread_switch will "return" to it
++  t->context.ra = (uint64)func;
++
++  // Set SP to the top of the stack (highest address)
++  t->context.sp = (uint64)(t->stack + STACK_SIZE);
+ }
+ 
+-void 
++void
+ thread_yield(void)
+ {
+   current_thread->state = RUNNABLE;
+diff --git a/user/uthread_switch.S b/user/uthread_switch.S
+index 3793df0..d19d345 100644
+--- a/user/uthread_switch.S
++++ b/user/uthread_switch.S
+@@ -8,4 +8,36 @@
+ 	.globl thread_switch
+ thread_switch:
+ 	/* TODO: save/restore regs */
++    /* Save registers into old context (a0) */
++    sd ra, 0(a0)
++    sd sp, 8(a0)
++    sd s0, 16(a0)
++    sd s1, 24(a0)
++    sd s2, 32(a0)
++    sd s3, 40(a0)
++    sd s4, 48(a0)
++    sd s5, 56(a0)
++    sd s6, 64(a0)
++    sd s7, 72(a0)
++    sd s8, 80(a0)
++    sd s9, 88(a0)
++    sd s10, 96(a0)
++    sd s11, 104(a0)
++
++    /* Load registers from new context (a1) */
++    ld ra, 0(a1)
++    ld sp, 8(a1)
++    ld s0, 16(a1)
++    ld s1, 24(a1)
++    ld s2, 32(a1)
++    ld s3, 40(a1)
++    ld s4, 48(a1)
++    ld s5, 56(a1)
++    ld s6, 64(a1)
++    ld s7, 72(a1)
++    ld s8, 80(a1)
++    ld s9, 88(a1)
++    ld s10, 96(a1)
++    ld s11, 104(a1)
++
+ 	ret    /* return to ra */
+-- 
+2.53.0
+
+From 7854980fb5ea92e01370a21b79ed447c3aa8e68a Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Sun, 29 Mar 2026 14:19:15 +0800
+Subject: [PATCH 5/5] changed extern declaration for thread_switch
+
+---
+ user/uthread.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/user/uthread.c b/user/uthread.c
+index af5e111..6b0ee87 100644
+--- a/user/uthread.c
++++ b/user/uthread.c
+@@ -36,7 +36,7 @@ struct thread {
+ };
+ struct thread all_thread[MAX_THREAD];
+ struct thread *current_thread;
+-extern void thread_switch(uint64, uint64);
++extern void thread_switch(struct context *old, struct context *new);
+ 
+ void
+ thread_init(void)
+-- 
+2.53.0
+

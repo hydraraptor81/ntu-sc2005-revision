@@ -1,0 +1,253 @@
+From ccc3e140bbf2b5e037d542ad6a266d5cc2fc8f9f Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 13:50:02 +0800
+Subject: [PATCH 06/11] implemented helper function in vm.c to mark pte with
+ PTE_LAZY flag
+
+---
+ kernel/defs.h    |  1 +
+ kernel/riscv.h   | 31 ++++++++++++++++---------------
+ kernel/sysproc.c |  6 ++++++
+ kernel/vm.c      | 29 ++++++++++++++++++++++++++---
+ 4 files changed, 49 insertions(+), 18 deletions(-)
+
+diff --git a/kernel/defs.h b/kernel/defs.h
+index d1b6bb9..9ccc38c 100644
+--- a/kernel/defs.h
++++ b/kernel/defs.h
+@@ -165,6 +165,7 @@ void            uvmfirst(pagetable_t, uchar *, uint);
+ uint64          uvmalloc(pagetable_t, uint64, uint64, int);
+ uint64          uvmdealloc(pagetable_t, uint64, uint64);
+ int             uvmcopy(pagetable_t, pagetable_t, uint64);
++int             uvmlazy(pagetable_t, uint64, uint64);
+ void            uvmfree(pagetable_t, uint64);
+ void            uvmunmap(pagetable_t, uint64, uint64, int);
+ void            uvmclear(pagetable_t, uint64);
+diff --git a/kernel/riscv.h b/kernel/riscv.h
+index ef3372c..5131a33 100644
+--- a/kernel/riscv.h
++++ b/kernel/riscv.h
+@@ -24,7 +24,7 @@ r_mstatus()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_mstatus(uint64 x)
+ {
+   asm volatile("csrw mstatus, %0" : : "r" (x));
+@@ -33,7 +33,7 @@ w_mstatus(uint64 x)
+ // machine exception program counter, holds the
+ // instruction address to which a return from
+ // exception will go.
+-static inline void 
++static inline void
+ w_mepc(uint64 x)
+ {
+   asm volatile("csrw mepc, %0" : : "r" (x));
+@@ -55,7 +55,7 @@ r_sstatus()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_sstatus(uint64 x)
+ {
+   asm volatile("csrw sstatus, %0" : : "r" (x));
+@@ -70,7 +70,7 @@ r_sip()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_sip(uint64 x)
+ {
+   asm volatile("csrw sip, %0" : : "r" (x));
+@@ -87,7 +87,7 @@ r_sie()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_sie(uint64 x)
+ {
+   asm volatile("csrw sie, %0" : : "r" (x));
+@@ -103,7 +103,7 @@ r_mie()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_mie(uint64 x)
+ {
+   asm volatile("csrw mie, %0" : : "r" (x));
+@@ -112,7 +112,7 @@ w_mie(uint64 x)
+ // supervisor exception program counter, holds the
+ // instruction address to which a return from
+ // exception will go.
+-static inline void 
++static inline void
+ w_sepc(uint64 x)
+ {
+   asm volatile("csrw sepc, %0" : : "r" (x));
+@@ -135,7 +135,7 @@ r_medeleg()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_medeleg(uint64 x)
+ {
+   asm volatile("csrw medeleg, %0" : : "r" (x));
+@@ -150,7 +150,7 @@ r_mideleg()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_mideleg(uint64 x)
+ {
+   asm volatile("csrw mideleg, %0" : : "r" (x));
+@@ -158,7 +158,7 @@ w_mideleg(uint64 x)
+ 
+ // Supervisor Trap-Vector Base Address
+ // low two bits are mode.
+-static inline void 
++static inline void
+ w_stvec(uint64 x)
+ {
+   asm volatile("csrw stvec, %0" : : "r" (x));
+@@ -182,7 +182,7 @@ r_stimecmp()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_stimecmp(uint64 x)
+ {
+   // asm volatile("csrw stimecmp, %0" : : "r" (x));
+@@ -199,7 +199,7 @@ r_menvcfg()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_menvcfg(uint64 x)
+ {
+   // asm volatile("csrw menvcfg, %0" : : "r" (x));
+@@ -226,7 +226,7 @@ w_pmpaddr0(uint64 x)
+ 
+ // supervisor address translation and protection;
+ // holds the address of the page table.
+-static inline void 
++static inline void
+ w_satp(uint64 x)
+ {
+   asm volatile("csrw satp, %0" : : "r" (x));
+@@ -259,7 +259,7 @@ r_stval()
+ }
+ 
+ // Machine-mode Counter-Enable
+-static inline void 
++static inline void
+ w_mcounteren(uint64 x)
+ {
+   asm volatile("csrw mcounteren, %0" : : "r" (x));
+@@ -322,7 +322,7 @@ r_tp()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_tp(uint64 x)
+ {
+   asm volatile("mv tp, %0" : : "r" (x));
+@@ -360,6 +360,7 @@ typedef uint64 *pagetable_t; // 512 PTEs
+ #define PTE_W (1L << 2)
+ #define PTE_X (1L << 3)
+ #define PTE_U (1L << 4) // user can access
++#define PTE_LAZY (1L << 8) // Lazy allocation flag
+ 
+ // shift a physical address to the right place for a PTE.
+ #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index be40f7a..440f3bc 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -50,6 +50,12 @@ sys_sbrk(void)
+ 
+   // lazy allocation, increase virtual limit without allocating physical RAM
+   if(n > 0){
++    // ensure allocation does not exceed max virtual address
++    if(addr + n >= MAXVA)
++      return -1;
++    // call helper function to mark page table entries with PTE_LAZY flag
++    if(uvmlazy(p->pagetable, addr, addr + n) < 0)
++      return -1;
+     p->sz += n;
+   }
+   // if n is negative, shrink heap, free memory immediately
+diff --git a/kernel/vm.c b/kernel/vm.c
+index 62421a2..0a31802 100644
+--- a/kernel/vm.c
++++ b/kernel/vm.c
+@@ -45,7 +45,7 @@ kvmmake(void)
+ 
+   // allocate and map a kernel stack for each process.
+   proc_mapstacks(kpgtbl);
+-  
++
+   return kpgtbl;
+ }
+ 
+@@ -154,7 +154,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+ 
+   if(size == 0)
+     panic("mappages: size");
+-  
++
+   a = va;
+   last = va + size - PGSIZE;
+   for(;;){
+@@ -345,7 +345,7 @@ void
+ uvmclear(pagetable_t pagetable, uint64 va)
+ {
+   pte_t *pte;
+-  
++
+   pte = walk(pagetable, va, 0);
+   if(pte == 0)
+     panic("uvmclear");
+@@ -355,6 +355,29 @@ uvmclear(pagetable_t pagetable, uint64 va)
+ // Copy from kernel to user.
+ // Copy len bytes from src to virtual address dstva in a given page table.
+ // Return 0 on success, -1 on error.
++
++// Helper function to map virtual addresses with no physical pages allocated
++int uvmlazy(pagetable_t pagetable, uint64 start, uint64 end)
++{
++  uint64 a;
++  pte_t *pte;
++
++  // align page boundary
++  a = PGROUNDUP(start);
++
++  for (; a < end; a += PGSIZE){
++    pte = walk(pagetable, a, 1);
++
++    // kernel ran out of memory if walk returns 0
++    if(pte == 0)
++      return -1;
++
++    // set PTE_LAZY flag
++    *pte = PTE_LAZY;
++  }
++  return 0;
++}
++
+ int
+ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
+ {
+-- 
+2.53.0
+

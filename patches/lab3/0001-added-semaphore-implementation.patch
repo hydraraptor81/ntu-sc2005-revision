@@ -1,0 +1,78 @@
+From 94e734dcbdbcddad547094d23779ab4dd133e002 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Wed, 1 Apr 2026 22:57:56 +0800
+Subject: [PATCH 1/4] added semaphore implementation
+
+---
+ kernel/semaphore.c | 36 +++++++++++++++++++++++++-----------
+ 1 file changed, 25 insertions(+), 11 deletions(-)
+
+diff --git a/kernel/semaphore.c b/kernel/semaphore.c
+index 2c83beb..9caa618 100644
+--- a/kernel/semaphore.c
++++ b/kernel/semaphore.c
+@@ -48,7 +48,7 @@ sem_free(int semid)
+ {
+   if(semid < 0 || semid >= MAX_SEMAPHORES)
+     return -1;
+-  
++
+   acquire(&sem_table_lock);
+   semaphores[semid].in_use = 0;
+   release(&sem_table_lock);
+@@ -61,11 +61,17 @@ sem_wait(int semid)
+ {
+   if(semid < 0 || semid >= MAX_SEMAPHORES || !semaphores[semid].in_use)
+     return -1;
+- 
+-  // TODO Retrieve semaphore: uncomment below
+-  // struct semaphore *sem = &semaphores[semid];
+-  // TODO sleep while semaphore is zero
+-  // TODO decrement semaphore value atomically
++
++  // Retrieve semaphore: uncomment below
++  struct semaphore *sem = &semaphores[semid];
++  // sleep while semaphore is zero
++  acquire(&sem->lock);
++  while(sem->value == 0) {
++    sleep(&sem->value, &sem->lock);
++  }
++  // decrement semaphore value atomically
++  sem->value--;
++  release(&sem->lock);
+   return 0;
+ }
+ 
+@@ -75,9 +81,13 @@ sem_signal(int semid)
+   if(semid < 0 || semid >= MAX_SEMAPHORES || !semaphores[semid].in_use)
+     return -1;
+ 
+-  // TODO Retrieve semaphore: uncomment below
+-  // struct semaphore *sem = &semaphores[semid];
+-  // TODO increment semaphore value atomically, notifying sleeping processes
++  // Retrieve semaphore
++  struct semaphore *sem = &semaphores[semid];
++  acquire(&sem->lock);
++  // increment semaphore value atomically, notifying sleeping processes
++  sem->value++;
++  wakeup(&sem->value);
++  release(&sem->lock);
+   return 0;
+ }
+ 
+@@ -86,6 +96,10 @@ sem_getvalue(int semid)
+ {
+   if(semid < 0 || semid >= MAX_SEMAPHORES || !semaphores[semid].in_use)
+     return -1;
+-  // TODO return value of semid atomically
+-  return -1;
++  // return value of semid atomically
++  struct semaphore *sem = &semaphores[semid];
++  acquire(&sem->lock);
++  int val = sem->value;
++  release(&sem->lock);
++  return val;
+ }
+-- 
+2.53.0
+

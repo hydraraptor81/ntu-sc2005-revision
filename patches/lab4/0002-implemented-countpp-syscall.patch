@@ -1,0 +1,111 @@
+From 86aff97c959642ba4e10a51322f8e4674d335a18 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Sun, 19 Apr 2026 22:31:33 +0800
+Subject: [PATCH 02/11] implemented countpp syscall
+
+---
+ Makefile         |  1 +
+ kernel/syscall.c |  2 ++
+ kernel/syscall.h |  1 +
+ kernel/sysproc.c | 24 ++++++++++++++++++++++++
+ user/user.h      |  1 +
+ user/usys.pl     |  1 +
+ 6 files changed, 30 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index aa7ed99..338f447 100644
+--- a/Makefile
++++ b/Makefile
+@@ -143,6 +143,7 @@ UPROGS=\
+ 	$U/_wc\
+ 	$U/_zombie\
+ 	$U/_countvp_test\
++	$U/_countpp_test\
+ 
+ fs.img: mkfs/mkfs README $(UPROGS)
+ 	mkfs/mkfs fs.img README $(UPROGS)
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index eaa621c..b9b213b 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -102,6 +102,7 @@ extern uint64 sys_link(void);
+ extern uint64 sys_mkdir(void);
+ extern uint64 sys_close(void);
+ extern uint64 sys_countvp(void);
++extern uint64 sys_countpp(void);
+ 
+ // An array mapping syscall numbers from syscall.h
+ // to the function that handles the system call.
+@@ -128,6 +129,7 @@ static uint64 (*syscalls[])(void) = {
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
+ [SYS_countvp] sys_countvp,
++[SYS_countpp] sys_countpp,
+ };
+ 
+ void
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index a4990be..58fa506 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -21,3 +21,4 @@
+ #define SYS_mkdir  20
+ #define SYS_close  21
+ #define SYS_countvp 22
++#define SYS_countpp 23
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index 809cb8b..c8c6546 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -103,3 +103,27 @@ sys_countvp(void)
+ 
+   return num_virtual_pages;
+ }
++
++uint64
++sys_countpp(void)
++{
++  struct proc *p = myproc(); // ptr to process control block proc struct
++  uint64 physical_page_count = 0;
++  uint64 va;
++  pte_t *pte;
++
++  // iterate through virtual address space for one 4K page at a time
++  for(va = 0; va < p->sz; va += PGSIZE){
++    // walk the page table to find the page table entry for this va,
++    // 0 argument means, do not create a page table entry if it does not exist
++    pte = walk(p->pagetable, va, 0);
++
++    // check if pte exist and whether the PTE_V flag is set
++    if(pte != 0 && (*pte * PTE_V) != 0){
++      physical_page_count++;
++    }
++  }
++
++  return physical_page_count;
++
++}
+diff --git a/user/user.h b/user/user.h
+index c844877..aa03a6b 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -23,6 +23,7 @@ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
+ int countvp(void);
++int countpp(void);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/user/usys.pl b/user/usys.pl
+index f224889..946866a 100755
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -37,3 +37,4 @@ entry("sbrk");
+ entry("sleep");
+ entry("uptime");
+ entry("countvp");
++entry("countpp");
+-- 
+2.53.0
+

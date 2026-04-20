@@ -1,0 +1,1005 @@
+From d20288ee8cce4c0fdd54533ae87b1931aebde2c2 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Sun, 19 Apr 2026 22:03:48 +0800
+Subject: [PATCH 01/11] implemented countvp syscall
+
+---
+ Makefile         |  7 ++++---
+ kernel/syscall.c |  2 ++
+ kernel/syscall.h |  1 +
+ kernel/sysproc.c | 12 ++++++++++++
+ user/user.h      |  1 +
+ user/usys.pl     |  3 ++-
+ 6 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index fab7bc9..aa7ed99 100644
+--- a/Makefile
++++ b/Makefile
+@@ -32,7 +32,7 @@ OBJS = \
+ 
+ # riscv64-unknown-elf- or riscv64-linux-gnu-
+ # perhaps in /opt/riscv/bin
+-#TOOLPREFIX = 
++#TOOLPREFIX =
+ 
+ # Try to infer the correct TOOLPREFIX if not set
+ ifndef TOOLPREFIX
+@@ -84,7 +84,7 @@ endif
+ LDFLAGS = -z max-page-size=4096
+ 
+ $K/kernel: $(OBJS) $K/kernel.ld $U/initcode
+-	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
++	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS)
+ 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
+ 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
+ 
+@@ -142,13 +142,14 @@ UPROGS=\
+ 	$U/_grind\
+ 	$U/_wc\
+ 	$U/_zombie\
++	$U/_countvp_test\
+ 
+ fs.img: mkfs/mkfs README $(UPROGS)
+ 	mkfs/mkfs fs.img README $(UPROGS)
+ 
+ -include kernel/*.d user/*.d
+ 
+-clean: 
++clean:
+ 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
+ 	*/*.o */*.d */*.asm */*.sym \
+ 	$U/initcode $U/initcode.out $K/kernel fs.img \
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index ed65409..eaa621c 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -101,6 +101,7 @@ extern uint64 sys_unlink(void);
+ extern uint64 sys_link(void);
+ extern uint64 sys_mkdir(void);
+ extern uint64 sys_close(void);
++extern uint64 sys_countvp(void);
+ 
+ // An array mapping syscall numbers from syscall.h
+ // to the function that handles the system call.
+@@ -126,6 +127,7 @@ static uint64 (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_countvp] sys_countvp,
+ };
+ 
+ void
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index bc5f356..a4990be 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -20,3 +20,4 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_countvp 22
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index 3b4d5bd..809cb8b 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -91,3 +91,15 @@ sys_uptime(void)
+   release(&tickslock);
+   return xticks;
+ }
++
++uint64
++sys_countvp(void)
++{
++  struct proc *p = myproc();
++  // Process size p->sz tracks total bytes of virtual memory allocated
++  // to user program (text + data + guard page + stack + heap)
++  // round up to nearest page boundary and divide by page size
++  uint64 num_virtual_pages = PGROUNDUP(p->sz) / PGSIZE;
++
++  return num_virtual_pages;
++}
+diff --git a/user/user.h b/user/user.h
+index f16fe27..c844877 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -22,6 +22,7 @@ int getpid(void);
+ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
++int countvp(void);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/user/usys.pl b/user/usys.pl
+index 01e426e..f224889 100755
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -14,7 +14,7 @@ sub entry {
+     print " ecall\n";
+     print " ret\n";
+ }
+-	
++
+ entry("fork");
+ entry("exit");
+ entry("wait");
+@@ -36,3 +36,4 @@ entry("getpid");
+ entry("sbrk");
+ entry("sleep");
+ entry("uptime");
++entry("countvp");
+-- 
+2.53.0
+
+From 86aff97c959642ba4e10a51322f8e4674d335a18 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Sun, 19 Apr 2026 22:31:33 +0800
+Subject: [PATCH 02/11] implemented countpp syscall
+
+---
+ Makefile         |  1 +
+ kernel/syscall.c |  2 ++
+ kernel/syscall.h |  1 +
+ kernel/sysproc.c | 24 ++++++++++++++++++++++++
+ user/user.h      |  1 +
+ user/usys.pl     |  1 +
+ 6 files changed, 30 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index aa7ed99..338f447 100644
+--- a/Makefile
++++ b/Makefile
+@@ -143,6 +143,7 @@ UPROGS=\
+ 	$U/_wc\
+ 	$U/_zombie\
+ 	$U/_countvp_test\
++	$U/_countpp_test\
+ 
+ fs.img: mkfs/mkfs README $(UPROGS)
+ 	mkfs/mkfs fs.img README $(UPROGS)
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index eaa621c..b9b213b 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -102,6 +102,7 @@ extern uint64 sys_link(void);
+ extern uint64 sys_mkdir(void);
+ extern uint64 sys_close(void);
+ extern uint64 sys_countvp(void);
++extern uint64 sys_countpp(void);
+ 
+ // An array mapping syscall numbers from syscall.h
+ // to the function that handles the system call.
+@@ -128,6 +129,7 @@ static uint64 (*syscalls[])(void) = {
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
+ [SYS_countvp] sys_countvp,
++[SYS_countpp] sys_countpp,
+ };
+ 
+ void
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index a4990be..58fa506 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -21,3 +21,4 @@
+ #define SYS_mkdir  20
+ #define SYS_close  21
+ #define SYS_countvp 22
++#define SYS_countpp 23
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index 809cb8b..c8c6546 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -103,3 +103,27 @@ sys_countvp(void)
+ 
+   return num_virtual_pages;
+ }
++
++uint64
++sys_countpp(void)
++{
++  struct proc *p = myproc(); // ptr to process control block proc struct
++  uint64 physical_page_count = 0;
++  uint64 va;
++  pte_t *pte;
++
++  // iterate through virtual address space for one 4K page at a time
++  for(va = 0; va < p->sz; va += PGSIZE){
++    // walk the page table to find the page table entry for this va,
++    // 0 argument means, do not create a page table entry if it does not exist
++    pte = walk(p->pagetable, va, 0);
++
++    // check if pte exist and whether the PTE_V flag is set
++    if(pte != 0 && (*pte * PTE_V) != 0){
++      physical_page_count++;
++    }
++  }
++
++  return physical_page_count;
++
++}
+diff --git a/user/user.h b/user/user.h
+index c844877..aa03a6b 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -23,6 +23,7 @@ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
+ int countvp(void);
++int countpp(void);
+ 
+ // ulib.c
+ int stat(const char*, struct stat*);
+diff --git a/user/usys.pl b/user/usys.pl
+index f224889..946866a 100755
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -37,3 +37,4 @@ entry("sbrk");
+ entry("sleep");
+ entry("uptime");
+ entry("countvp");
++entry("countpp");
+-- 
+2.53.0
+
+From d1af2360baed79fcfe99e3caa00fdf09f8926e60 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 12:19:39 +0800
+Subject: [PATCH 03/11] modified usertrap in trap.c to print offending virtual
+ address when page faults
+
+---
+ kernel/trap.c | 22 +++++++++++++++-------
+ 1 file changed, 15 insertions(+), 7 deletions(-)
+
+diff --git a/kernel/trap.c b/kernel/trap.c
+index d454a7d..25cbaa8 100644
+--- a/kernel/trap.c
++++ b/kernel/trap.c
+@@ -46,10 +46,10 @@ usertrap(void)
+   w_stvec((uint64)kernelvec);
+ 
+   struct proc *p = myproc();
+-  
++
+   // save user program counter.
+   p->trapframe->epc = r_sepc();
+-  
++
+   if(r_scause() == 8){
+     // system call
+ 
+@@ -67,7 +67,15 @@ usertrap(void)
+     syscall();
+   } else if((which_dev = devintr()) != 0){
+     // ok
+-  } else {
++    // print virtual address which caused the user page fault
++    // when page fault happens cpu writes virtual address that failed into
++    // supervisor trap value stval register
++  } else if(r_scause() == 13 || r_scause() == 15) {
++    printf("User page fault detected, offending virtual address: %p\n",
++    (void *)r_stval());
++    p->killed = 1;
++  }
++    else {
+     printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
+     printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
+     setkilled(p);
+@@ -109,7 +117,7 @@ usertrapret(void)
+ 
+   // set up the registers that trampoline.S's sret will use
+   // to get to user space.
+-  
++
+   // set S Previous Privilege mode to User.
+   unsigned long x = r_sstatus();
+   x &= ~SSTATUS_SPP; // clear SPP to 0 for user mode
+@@ -122,7 +130,7 @@ usertrapret(void)
+   // tell trampoline.S the user page table to switch to.
+   uint64 satp = MAKE_SATP(p->pagetable);
+ 
+-  // jump to userret in trampoline.S at the top of memory, which 
++  // jump to userret in trampoline.S at the top of memory, which
+   // switches to the user page table, restores user registers,
+   // and switches to user mode with sret.
+   uint64 trampoline_userret = TRAMPOLINE + (userret - trampoline);
+@@ -131,14 +139,14 @@ usertrapret(void)
+ 
+ // interrupts and exceptions from kernel code go here via kernelvec,
+ // on whatever the current kernel stack is.
+-void 
++void
+ kerneltrap()
+ {
+   int which_dev = 0;
+   uint64 sepc = r_sepc();
+   uint64 sstatus = r_sstatus();
+   uint64 scause = r_scause();
+-  
++
+   if((sstatus & SSTATUS_SPP) == 0)
+     panic("kerneltrap: not from supervisor mode");
+   if(intr_get() != 0)
+-- 
+2.53.0
+
+From 882015065e216eab5ad523edea3f6d46cdd06635 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 12:20:51 +0800
+Subject: [PATCH 04/11] added fault.c to dereference null ptr and out of bounds
+ ptr
+
+---
+ Makefile     |  1 +
+ user/fault.c | 27 +++++++++++++++++++++++++++
+ 2 files changed, 28 insertions(+)
+ create mode 100644 user/fault.c
+
+diff --git a/Makefile b/Makefile
+index 338f447..4f604c0 100644
+--- a/Makefile
++++ b/Makefile
+@@ -144,6 +144,7 @@ UPROGS=\
+ 	$U/_zombie\
+ 	$U/_countvp_test\
+ 	$U/_countpp_test\
++	$U/_fault\
+ 
+ fs.img: mkfs/mkfs README $(UPROGS)
+ 	mkfs/mkfs fs.img README $(UPROGS)
+diff --git a/user/fault.c b/user/fault.c
+new file mode 100644
+index 0000000..0c31019
+--- /dev/null
++++ b/user/fault.c
+@@ -0,0 +1,27 @@
++#include "kernel/types.h"
++#include "user/user.h"
++
++int main(int argc, char *argv[])
++{
++  if(argc <2) {
++    printf("Usage: fault <null|bounds>\n");
++    exit(1);
++  }
++
++  if(strcmp(argv[1], "null") == 0){
++    int *null_ptr = (int *)0;
++    printf("Writing to null pointer\n");
++    *null_ptr = 81;
++  }
++  else if(strcmp(argv[1], "bounds") == 0){
++    // return current top of allocated heap
++    char *heap_top = sbrk(0);
++    // create a pointer exactly one page past the boundary
++    char *out_of_bounds_ptr = heap_top + 4096;
++    printf("Out of bounds write at %p\n", out_of_bounds_ptr);
++    *out_of_bounds_ptr = 81;
++  }
++  else {
++    printf("Invalid option");
++  }
++}
+-- 
+2.53.0
+
+From c07a8c654df59c3b41d0913b8c6dae70ccad50fb Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 12:50:08 +0800
+Subject: [PATCH 05/11] modified sbrk() syscall to only increase p->sz without
+ allocating physical pages
+
+---
+ kernel/sysproc.c | 19 ++++++++++++++++---
+ 1 file changed, 16 insertions(+), 3 deletions(-)
+
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index c8c6546..be40f7a 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -40,11 +40,24 @@ sys_sbrk(void)
+ {
+   uint64 addr;
+   int n;
++  struct proc *p = myproc();
+ 
++  // get requested growth size from user registers
+   argint(0, &n);
+-  addr = myproc()->sz;
+-  if(growproc(n) < 0)
+-    return -1;
++
++  // save current process size
++  addr = p->sz;
++
++  // lazy allocation, increase virtual limit without allocating physical RAM
++  if(n > 0){
++    p->sz += n;
++  }
++  // if n is negative, shrink heap, free memory immediately
++  else if(n < 0){
++    p->sz = addr;
++    if(growproc(n) < 0)
++      return -1;
++  }
+   return addr;
+ }
+ 
+-- 
+2.53.0
+
+From ccc3e140bbf2b5e037d542ad6a266d5cc2fc8f9f Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 13:50:02 +0800
+Subject: [PATCH 06/11] implemented helper function in vm.c to mark pte with
+ PTE_LAZY flag
+
+---
+ kernel/defs.h    |  1 +
+ kernel/riscv.h   | 31 ++++++++++++++++---------------
+ kernel/sysproc.c |  6 ++++++
+ kernel/vm.c      | 29 ++++++++++++++++++++++++++---
+ 4 files changed, 49 insertions(+), 18 deletions(-)
+
+diff --git a/kernel/defs.h b/kernel/defs.h
+index d1b6bb9..9ccc38c 100644
+--- a/kernel/defs.h
++++ b/kernel/defs.h
+@@ -165,6 +165,7 @@ void            uvmfirst(pagetable_t, uchar *, uint);
+ uint64          uvmalloc(pagetable_t, uint64, uint64, int);
+ uint64          uvmdealloc(pagetable_t, uint64, uint64);
+ int             uvmcopy(pagetable_t, pagetable_t, uint64);
++int             uvmlazy(pagetable_t, uint64, uint64);
+ void            uvmfree(pagetable_t, uint64);
+ void            uvmunmap(pagetable_t, uint64, uint64, int);
+ void            uvmclear(pagetable_t, uint64);
+diff --git a/kernel/riscv.h b/kernel/riscv.h
+index ef3372c..5131a33 100644
+--- a/kernel/riscv.h
++++ b/kernel/riscv.h
+@@ -24,7 +24,7 @@ r_mstatus()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_mstatus(uint64 x)
+ {
+   asm volatile("csrw mstatus, %0" : : "r" (x));
+@@ -33,7 +33,7 @@ w_mstatus(uint64 x)
+ // machine exception program counter, holds the
+ // instruction address to which a return from
+ // exception will go.
+-static inline void 
++static inline void
+ w_mepc(uint64 x)
+ {
+   asm volatile("csrw mepc, %0" : : "r" (x));
+@@ -55,7 +55,7 @@ r_sstatus()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_sstatus(uint64 x)
+ {
+   asm volatile("csrw sstatus, %0" : : "r" (x));
+@@ -70,7 +70,7 @@ r_sip()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_sip(uint64 x)
+ {
+   asm volatile("csrw sip, %0" : : "r" (x));
+@@ -87,7 +87,7 @@ r_sie()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_sie(uint64 x)
+ {
+   asm volatile("csrw sie, %0" : : "r" (x));
+@@ -103,7 +103,7 @@ r_mie()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_mie(uint64 x)
+ {
+   asm volatile("csrw mie, %0" : : "r" (x));
+@@ -112,7 +112,7 @@ w_mie(uint64 x)
+ // supervisor exception program counter, holds the
+ // instruction address to which a return from
+ // exception will go.
+-static inline void 
++static inline void
+ w_sepc(uint64 x)
+ {
+   asm volatile("csrw sepc, %0" : : "r" (x));
+@@ -135,7 +135,7 @@ r_medeleg()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_medeleg(uint64 x)
+ {
+   asm volatile("csrw medeleg, %0" : : "r" (x));
+@@ -150,7 +150,7 @@ r_mideleg()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_mideleg(uint64 x)
+ {
+   asm volatile("csrw mideleg, %0" : : "r" (x));
+@@ -158,7 +158,7 @@ w_mideleg(uint64 x)
+ 
+ // Supervisor Trap-Vector Base Address
+ // low two bits are mode.
+-static inline void 
++static inline void
+ w_stvec(uint64 x)
+ {
+   asm volatile("csrw stvec, %0" : : "r" (x));
+@@ -182,7 +182,7 @@ r_stimecmp()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_stimecmp(uint64 x)
+ {
+   // asm volatile("csrw stimecmp, %0" : : "r" (x));
+@@ -199,7 +199,7 @@ r_menvcfg()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_menvcfg(uint64 x)
+ {
+   // asm volatile("csrw menvcfg, %0" : : "r" (x));
+@@ -226,7 +226,7 @@ w_pmpaddr0(uint64 x)
+ 
+ // supervisor address translation and protection;
+ // holds the address of the page table.
+-static inline void 
++static inline void
+ w_satp(uint64 x)
+ {
+   asm volatile("csrw satp, %0" : : "r" (x));
+@@ -259,7 +259,7 @@ r_stval()
+ }
+ 
+ // Machine-mode Counter-Enable
+-static inline void 
++static inline void
+ w_mcounteren(uint64 x)
+ {
+   asm volatile("csrw mcounteren, %0" : : "r" (x));
+@@ -322,7 +322,7 @@ r_tp()
+   return x;
+ }
+ 
+-static inline void 
++static inline void
+ w_tp(uint64 x)
+ {
+   asm volatile("mv tp, %0" : : "r" (x));
+@@ -360,6 +360,7 @@ typedef uint64 *pagetable_t; // 512 PTEs
+ #define PTE_W (1L << 2)
+ #define PTE_X (1L << 3)
+ #define PTE_U (1L << 4) // user can access
++#define PTE_LAZY (1L << 8) // Lazy allocation flag
+ 
+ // shift a physical address to the right place for a PTE.
+ #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index be40f7a..440f3bc 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -50,6 +50,12 @@ sys_sbrk(void)
+ 
+   // lazy allocation, increase virtual limit without allocating physical RAM
+   if(n > 0){
++    // ensure allocation does not exceed max virtual address
++    if(addr + n >= MAXVA)
++      return -1;
++    // call helper function to mark page table entries with PTE_LAZY flag
++    if(uvmlazy(p->pagetable, addr, addr + n) < 0)
++      return -1;
+     p->sz += n;
+   }
+   // if n is negative, shrink heap, free memory immediately
+diff --git a/kernel/vm.c b/kernel/vm.c
+index 62421a2..0a31802 100644
+--- a/kernel/vm.c
++++ b/kernel/vm.c
+@@ -45,7 +45,7 @@ kvmmake(void)
+ 
+   // allocate and map a kernel stack for each process.
+   proc_mapstacks(kpgtbl);
+-  
++
+   return kpgtbl;
+ }
+ 
+@@ -154,7 +154,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+ 
+   if(size == 0)
+     panic("mappages: size");
+-  
++
+   a = va;
+   last = va + size - PGSIZE;
+   for(;;){
+@@ -345,7 +345,7 @@ void
+ uvmclear(pagetable_t pagetable, uint64 va)
+ {
+   pte_t *pte;
+-  
++
+   pte = walk(pagetable, va, 0);
+   if(pte == 0)
+     panic("uvmclear");
+@@ -355,6 +355,29 @@ uvmclear(pagetable_t pagetable, uint64 va)
+ // Copy from kernel to user.
+ // Copy len bytes from src to virtual address dstva in a given page table.
+ // Return 0 on success, -1 on error.
++
++// Helper function to map virtual addresses with no physical pages allocated
++int uvmlazy(pagetable_t pagetable, uint64 start, uint64 end)
++{
++  uint64 a;
++  pte_t *pte;
++
++  // align page boundary
++  a = PGROUNDUP(start);
++
++  for (; a < end; a += PGSIZE){
++    pte = walk(pagetable, a, 1);
++
++    // kernel ran out of memory if walk returns 0
++    if(pte == 0)
++      return -1;
++
++    // set PTE_LAZY flag
++    *pte = PTE_LAZY;
++  }
++  return 0;
++}
++
+ int
+ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
+ {
+-- 
+2.53.0
+
+From 1cb33ab37dfbf9033dc8ba2aaabf014e19be4f84 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 14:02:02 +0800
+Subject: [PATCH 07/11] added logic in trap.c to address lazy page faults
+ within valid range
+
+---
+ kernel/trap.c | 24 ++++++++++++++++++++----
+ 1 file changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/kernel/trap.c b/kernel/trap.c
+index 25cbaa8..442c105 100644
+--- a/kernel/trap.c
++++ b/kernel/trap.c
+@@ -70,10 +70,26 @@ usertrap(void)
+     // print virtual address which caused the user page fault
+     // when page fault happens cpu writes virtual address that failed into
+     // supervisor trap value stval register
+-  } else if(r_scause() == 13 || r_scause() == 15) {
+-    printf("User page fault detected, offending virtual address: %p\n",
+-    (void *)r_stval());
+-    p->killed = 1;
++  } else if(r_scause() == 13 || r_scause() == 15){
++  /* Exercise
++   * - Modify the trap handler so that page faults print the offending virtual
++   *   address before terminating the process.
++
++   * printf("User page fault detected, offending virtual address: %p\n",
++   * (void *)r_stval());
++   * p->killed = 1;
++   */
++
++    // r_stval, virtual address that failed
++    uint64 va = r_stval();
++    // check if it is a valid lazy page within bounds
++    if(va > 0 && va < p->sz){
++      printf("Valid lazy page fault caught at va :%p\n", (void *)va);
++      // TODO kalloc, mappages
++    } else {
++      printf("Invalid page fault at va :%p\n", (void *)va);
++      p->killed = 1;
++    }
+   }
+     else {
+     printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
+-- 
+2.53.0
+
+From af70f154d45dabf7550325753c789b5dfd76ef9b Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 14:45:37 +0800
+Subject: [PATCH 08/11] implemented demand paging
+
+---
+ kernel/trap.c | 29 ++++++++++++++++++++++++-----
+ 1 file changed, 24 insertions(+), 5 deletions(-)
+
+diff --git a/kernel/trap.c b/kernel/trap.c
+index 442c105..11a74cf 100644
+--- a/kernel/trap.c
++++ b/kernel/trap.c
+@@ -74,18 +74,37 @@ usertrap(void)
+   /* Exercise
+    * - Modify the trap handler so that page faults print the offending virtual
+    *   address before terminating the process.
+-
+-   * printf("User page fault detected, offending virtual address: %p\n",
+-   * (void *)r_stval());
+-   * p->killed = 1;
+    */
+ 
++    printf("User page fault detected, offending virtual address: %p\n",
++    (void *)r_stval());
++    // p->killed = 1;
++
+     // r_stval, virtual address that failed
+     uint64 va = r_stval();
+     // check if it is a valid lazy page within bounds
+     if(va > 0 && va < p->sz){
+       printf("Valid lazy page fault caught at va :%p\n", (void *)va);
+-      // TODO kalloc, mappages
++
++      // align virtual address to the start of page boundary
++      uint64 va_page = PGROUNDDOWN(va);
++      // allocate physical page of RAM
++      char *pa = kalloc();
++      // check if there is enough physical RAM
++      if(pa == 0){
++        p->killed =1;
++      } else {
++        // Zero physical page
++        memset(pa, 0, PGSIZE);
++
++        // map physical page into process' page table, and set RWU flags
++        if(mappages(p->pagetable, va_page, PGSIZE, (uint64)pa,
++        PTE_W|PTE_R|PTE_U) != 0){
++        // if mapping fails, free the physical page
++          kfree(pa);
++          p->killed =1;
++        }
++      }
+     } else {
+       printf("Invalid page fault at va :%p\n", (void *)va);
+       p->killed = 1;
+-- 
+2.53.0
+
+From 524c97589378308b0afe1b60ecd24c5f5e095ca1 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 14:46:20 +0800
+Subject: [PATCH 09/11] prevent uvmunamp and uvmcopy from panic due to lazy
+ page allocation
+
+---
+ kernel/vm.c | 35 +++++++++++++++++++++++++++++++----
+ 1 file changed, 31 insertions(+), 4 deletions(-)
+
+diff --git a/kernel/vm.c b/kernel/vm.c
+index 0a31802..c8ffb92 100644
+--- a/kernel/vm.c
++++ b/kernel/vm.c
+@@ -186,8 +186,19 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
+   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
+     if((pte = walk(pagetable, a, 0)) == 0)
+       panic("uvmunmap: walk");
+-    if((*pte & PTE_V) == 0)
+-      panic("uvmunmap: not mapped");
++    if((*pte & PTE_V) == 0){
++    // In demand paging, a virtual page can be part of the process size (sz)
++    // but not yet backed by physical RAM
++      if(*pte & PTE_LAZY){
++      /* If the valid bit is 0, this is a lazy page.
++       * which is untouched, thus page was never
++       * physically allocated we can simply continue
++       */
++        continue;
++      } else {
++        panic("uvmunmap: not mapped");
++      }
++    }
+     if(PTE_FLAGS(*pte) == PTE_V)
+       panic("uvmunmap: not a leaf");
+     if(do_free){
+@@ -320,8 +331,24 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
+   for(i = 0; i < sz; i += PGSIZE){
+     if((pte = walk(old, i, 0)) == 0)
+       panic("uvmcopy: pte should exist");
+-    if((*pte & PTE_V) == 0)
+-      panic("uvmcopy: page not present");
++    // In demand paging, a virtual page can be part of the process size (sz)
++    // but not yet backed by physical RAM
++    if((*pte & PTE_V) == 0){
++      /* If the valid bit is 0, this is a lazy page.
++       * Parent process is simply promised this memory
++       * which is not physically allocated yet.
++       * The child will eventually touch this address
++       * and trigger its own page fault and memory
++       * will be physically allocated
++       */
++
++       // check if page is actually lazy
++       if(*pte & PTE_LAZY){
++         continue;
++      } else {
++        panic("uvmcopy: page not present");
++      }
++    }
+     pa = PTE2PA(*pte);
+     flags = PTE_FLAGS(*pte);
+     if((mem = kalloc()) == 0)
+-- 
+2.53.0
+
+From f7812c829594c3aa618a44cc4244e4dcf7d6522c Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 14:57:31 +0800
+Subject: [PATCH 10/11] added test files
+
+---
+ user/countpp_test.c | 14 ++++++++++++++
+ user/countvp_test.c | 14 ++++++++++++++
+ user/lazytest.c     | 46 +++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 74 insertions(+)
+ create mode 100644 user/countpp_test.c
+ create mode 100644 user/countvp_test.c
+ create mode 100644 user/lazytest.c
+
+diff --git a/user/countpp_test.c b/user/countpp_test.c
+new file mode 100644
+index 0000000..ac9aef1
+--- /dev/null
++++ b/user/countpp_test.c
+@@ -0,0 +1,14 @@
++#include "kernel/types.h"
++#include "user/user.h"
++
++int
++main(int argc, char *argv[])
++{
++  int pp_count;
++
++  pp_count = countpp();
++
++  printf("Current process physical page count: %d\n", pp_count);
++
++  exit(0);
++}
+diff --git a/user/countvp_test.c b/user/countvp_test.c
+new file mode 100644
+index 0000000..affe4a1
+--- /dev/null
++++ b/user/countvp_test.c
+@@ -0,0 +1,14 @@
++#include "kernel/types.h"
++#include "user/user.h"
++
++int
++main(int argc, char *argv[])
++{
++  int vp_count;
++
++  vp_count = countvp();
++
++  printf("Current process virtual page count: %d\n", vp_count);
++
++  exit(0);
++}
+diff --git a/user/lazytest.c b/user/lazytest.c
+new file mode 100644
+index 0000000..6a9545a
+--- /dev/null
++++ b/user/lazytest.c
+@@ -0,0 +1,46 @@
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++
++int
++main(int argc, char *argv[])
++{
++  int pages_to_alloc = 30;
++
++  // number of physical pages before
++  int before = countpp();
++  printf("Physical pages before sbrk() :%d\n", before);
++
++  // Request for 30 pages of memory
++  char *heap = sbrk(PGSIZE * pages_to_alloc);
++  if(heap == (char*)-1){
++    printf("sbrk failed\n");
++    exit(1);
++  }
++
++  int between = countpp();
++  printf("Physical pages after sbrk() before physically allocating: %d\n", between);
++
++  if(between > before + 2){
++    printf("Kernel is still using eager allocation\n");
++  } else {
++    printf("Kernel is using lazy allocation\n");
++  }
++
++  printf("\nTouching memory to force page faults\n");
++  for(int i = 0; i < pages_to_alloc; i++){
++    heap[i *PGSIZE] = '8';
++  }
++
++  int after = countpp();;
++  printf("Physical pages after touching all memory :%d\n", after);
++
++  if(after >= before + pages_to_alloc){
++    printf("Physical pages increased by %d\n", after - before);
++  } else {
++    printf("Physical pages were not properly allocated on demand");
++  }
++
++  exit(0);
++
++}
+-- 
+2.53.0
+
+From 284a89e4fcf17221d84b300fc5b1dc227e900719 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 15:14:45 +0800
+Subject: [PATCH 11/11] updated Makefile, include riscv headers
+
+---
+ Makefile        | 2 ++
+ user/lazytest.c | 1 +
+ 2 files changed, 3 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index 4f604c0..505fa7c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -144,8 +144,10 @@ UPROGS=\
+ 	$U/_zombie\
+ 	$U/_countvp_test\
+ 	$U/_countpp_test\
++	$U/_lazytest\
+ 	$U/_fault\
+ 
++
+ fs.img: mkfs/mkfs README $(UPROGS)
+ 	mkfs/mkfs fs.img README $(UPROGS)
+ 
+diff --git a/user/lazytest.c b/user/lazytest.c
+index 6a9545a..1c365aa 100644
+--- a/user/lazytest.c
++++ b/user/lazytest.c
+@@ -1,4 +1,5 @@
+ #include "kernel/types.h"
++#include "kernel/riscv.h"
+ #include "kernel/stat.h"
+ #include "user/user.h"
+ 
+-- 
+2.53.0
+

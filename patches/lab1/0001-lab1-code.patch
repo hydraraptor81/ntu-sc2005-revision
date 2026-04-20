@@ -1,0 +1,224 @@
+From e3321e29066e25bf493a1f00d7f521397c4e2804 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Wed, 25 Feb 2026 22:45:55 +0800
+Subject: [PATCH 1/1] lab1 code
+
+---
+ Makefile             | 10 +++++++---
+ kernel/syscall.c     |  2 ++
+ kernel/syscall.h     |  1 +
+ kernel/sysproc.c     | 23 +++++++++++++++++++++++
+ user/proccount.c     | 15 +++++++++++++++
+ user/testproccount.c | 26 ++++++++++++++++++++++++++
+ user/user.h          |  3 +++
+ user/usys.pl         |  3 ++-
+ user/zombie.c        |  1 +
+ 9 files changed, 80 insertions(+), 4 deletions(-)
+ create mode 100644 user/proccount.c
+ create mode 100644 user/testproccount.c
+
+diff --git a/Makefile b/Makefile
+index fab7bc9..af0ba4b 100644
+--- a/Makefile
++++ b/Makefile
+@@ -32,7 +32,7 @@ OBJS = \
+ 
+ # riscv64-unknown-elf- or riscv64-linux-gnu-
+ # perhaps in /opt/riscv/bin
+-#TOOLPREFIX = 
++#TOOLPREFIX =
+ 
+ # Try to infer the correct TOOLPREFIX if not set
+ ifndef TOOLPREFIX
+@@ -84,7 +84,7 @@ endif
+ LDFLAGS = -z max-page-size=4096
+ 
+ $K/kernel: $(OBJS) $K/kernel.ld $U/initcode
+-	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
++	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS)
+ 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
+ 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
+ 
+@@ -142,13 +142,17 @@ UPROGS=\
+ 	$U/_grind\
+ 	$U/_wc\
+ 	$U/_zombie\
++    $U/_pingpong\
++    $U/_proccount\
++    $U/_testproccount\
++
+ 
+ fs.img: mkfs/mkfs README $(UPROGS)
+ 	mkfs/mkfs fs.img README $(UPROGS)
+ 
+ -include kernel/*.d user/*.d
+ 
+-clean: 
++clean:
+ 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
+ 	*/*.o */*.d */*.asm */*.sym \
+ 	$U/initcode $U/initcode.out $K/kernel fs.img \
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index ed65409..d32e01a 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -101,6 +101,7 @@ extern uint64 sys_unlink(void);
+ extern uint64 sys_link(void);
+ extern uint64 sys_mkdir(void);
+ extern uint64 sys_close(void);
++extern uint64 sys_getproccount(void);
+ 
+ // An array mapping syscall numbers from syscall.h
+ // to the function that handles the system call.
+@@ -126,6 +127,7 @@ static uint64 (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_getproccount]  sys_getproccount,
+ };
+ 
+ void
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index bc5f356..dfbc503 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -20,3 +20,4 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_getproccount 22
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index 3b4d5bd..0cb8d5f 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -6,6 +6,8 @@
+ #include "spinlock.h"
+ #include "proc.h"
+ 
++extern struct proc proc[NPROC];
++
+ uint64
+ sys_exit(void)
+ {
+@@ -91,3 +93,24 @@ sys_uptime(void)
+   release(&tickslock);
+   return xticks;
+ }
++
++// returns number of active processes (not unused procstate)
++
++uint64
++sys_getproccount(void)
++{
++  struct proc *p;
++  int count = 0;
++
++// iterate through entire process table
++  for (p = proc; p < &proc[NPROC]; p++) {
++    acquire(&p->lock);
++    if(p->state !=UNUSED) {
++      count++;
++    }
++    release(&p->lock);
++  }
++  return count;
++}
++
++
+diff --git a/user/proccount.c b/user/proccount.c
+new file mode 100644
+index 0000000..7029a02
+--- /dev/null
++++ b/user/proccount.c
+@@ -0,0 +1,15 @@
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++
++int
++main(int argc, char *argv[])
++{
++  int count;
++
++  count = getproccount();
++  printf("Active processes: %d\n", count);
++
++  exit(0);
++}
++
+diff --git a/user/testproccount.c b/user/testproccount.c
+new file mode 100644
+index 0000000..a04e5d3
+--- /dev/null
++++ b/user/testproccount.c
+@@ -0,0 +1,26 @@
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++
++int
++main(int argc, char *argv[])
++{
++  int count1, count2;
++
++  count1 = getproccount();
++  printf("Before fork: %d\n", count1);
++
++  if(fork() == 0) {
++    // Child
++    count2 = getproccount();
++    printf("In child: %d\n", count2);
++    exit(0);
++  }
++
++  // Parent
++  wait(0);
++  count2 = getproccount();
++  printf("After child exits: %d\n", count2);
++
++  exit(0);
++}
+diff --git a/user/user.h b/user/user.h
+index f16fe27..2261cb8 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -41,3 +41,6 @@ void *memcpy(void *, const void *, uint);
+ // umalloc.c
+ void* malloc(uint);
+ void free(void*);
++
++// getproccount.c
++int getproccount(void);
+diff --git a/user/usys.pl b/user/usys.pl
+index 01e426e..703e3c6 100755
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -14,7 +14,7 @@ sub entry {
+     print " ecall\n";
+     print " ret\n";
+ }
+-	
++
+ entry("fork");
+ entry("exit");
+ entry("wait");
+@@ -36,3 +36,4 @@ entry("getpid");
+ entry("sbrk");
+ entry("sleep");
+ entry("uptime");
++entry("getproccount");
+diff --git a/user/zombie.c b/user/zombie.c
+index 8b89a33..58a000d 100644
+--- a/user/zombie.c
++++ b/user/zombie.c
+@@ -8,6 +8,7 @@
+ int
+ main(void)
+ {
++  printf("%d\n", getpid());
+   if(fork() > 0)
+     sleep(5);  // Let child exit before parent.
+   exit(0);
+-- 
+2.53.0
+

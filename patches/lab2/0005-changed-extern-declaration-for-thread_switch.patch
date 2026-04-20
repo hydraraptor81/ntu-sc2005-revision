@@ -1,0 +1,25 @@
+From 7854980fb5ea92e01370a21b79ed447c3aa8e68a Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Sun, 29 Mar 2026 14:19:15 +0800
+Subject: [PATCH 5/5] changed extern declaration for thread_switch
+
+---
+ user/uthread.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/user/uthread.c b/user/uthread.c
+index af5e111..6b0ee87 100644
+--- a/user/uthread.c
++++ b/user/uthread.c
+@@ -36,7 +36,7 @@ struct thread {
+ };
+ struct thread all_thread[MAX_THREAD];
+ struct thread *current_thread;
+-extern void thread_switch(uint64, uint64);
++extern void thread_switch(struct context *old, struct context *new);
+ 
+ void
+ thread_init(void)
+-- 
+2.53.0
+

@@ -1,0 +1,60 @@
+From 882015065e216eab5ad523edea3f6d46cdd06635 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 12:20:51 +0800
+Subject: [PATCH 04/11] added fault.c to dereference null ptr and out of bounds
+ ptr
+
+---
+ Makefile     |  1 +
+ user/fault.c | 27 +++++++++++++++++++++++++++
+ 2 files changed, 28 insertions(+)
+ create mode 100644 user/fault.c
+
+diff --git a/Makefile b/Makefile
+index 338f447..4f604c0 100644
+--- a/Makefile
++++ b/Makefile
+@@ -144,6 +144,7 @@ UPROGS=\
+ 	$U/_zombie\
+ 	$U/_countvp_test\
+ 	$U/_countpp_test\
++	$U/_fault\
+ 
+ fs.img: mkfs/mkfs README $(UPROGS)
+ 	mkfs/mkfs fs.img README $(UPROGS)
+diff --git a/user/fault.c b/user/fault.c
+new file mode 100644
+index 0000000..0c31019
+--- /dev/null
++++ b/user/fault.c
+@@ -0,0 +1,27 @@
++#include "kernel/types.h"
++#include "user/user.h"
++
++int main(int argc, char *argv[])
++{
++  if(argc <2) {
++    printf("Usage: fault <null|bounds>\n");
++    exit(1);
++  }
++
++  if(strcmp(argv[1], "null") == 0){
++    int *null_ptr = (int *)0;
++    printf("Writing to null pointer\n");
++    *null_ptr = 81;
++  }
++  else if(strcmp(argv[1], "bounds") == 0){
++    // return current top of allocated heap
++    char *heap_top = sbrk(0);
++    // create a pointer exactly one page past the boundary
++    char *out_of_bounds_ptr = heap_top + 4096;
++    printf("Out of bounds write at %p\n", out_of_bounds_ptr);
++    *out_of_bounds_ptr = 81;
++  }
++  else {
++    printf("Invalid option");
++  }
++}
+-- 
+2.53.0
+

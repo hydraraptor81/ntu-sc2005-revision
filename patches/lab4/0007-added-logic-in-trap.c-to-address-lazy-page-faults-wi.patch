@@ -1,0 +1,48 @@
+From 1cb33ab37dfbf9033dc8ba2aaabf014e19be4f84 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 14:02:02 +0800
+Subject: [PATCH 07/11] added logic in trap.c to address lazy page faults
+ within valid range
+
+---
+ kernel/trap.c | 24 ++++++++++++++++++++----
+ 1 file changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/kernel/trap.c b/kernel/trap.c
+index 25cbaa8..442c105 100644
+--- a/kernel/trap.c
++++ b/kernel/trap.c
+@@ -70,10 +70,26 @@ usertrap(void)
+     // print virtual address which caused the user page fault
+     // when page fault happens cpu writes virtual address that failed into
+     // supervisor trap value stval register
+-  } else if(r_scause() == 13 || r_scause() == 15) {
+-    printf("User page fault detected, offending virtual address: %p\n",
+-    (void *)r_stval());
+-    p->killed = 1;
++  } else if(r_scause() == 13 || r_scause() == 15){
++  /* Exercise
++   * - Modify the trap handler so that page faults print the offending virtual
++   *   address before terminating the process.
++
++   * printf("User page fault detected, offending virtual address: %p\n",
++   * (void *)r_stval());
++   * p->killed = 1;
++   */
++
++    // r_stval, virtual address that failed
++    uint64 va = r_stval();
++    // check if it is a valid lazy page within bounds
++    if(va > 0 && va < p->sz){
++      printf("Valid lazy page fault caught at va :%p\n", (void *)va);
++      // TODO kalloc, mappages
++    } else {
++      printf("Invalid page fault at va :%p\n", (void *)va);
++      p->killed = 1;
++    }
+   }
+     else {
+     printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
+-- 
+2.53.0
+

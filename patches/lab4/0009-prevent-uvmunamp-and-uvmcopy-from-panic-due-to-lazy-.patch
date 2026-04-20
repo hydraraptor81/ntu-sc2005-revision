@@ -1,0 +1,66 @@
+From 524c97589378308b0afe1b60ecd24c5f5e095ca1 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 14:46:20 +0800
+Subject: [PATCH 09/11] prevent uvmunamp and uvmcopy from panic due to lazy
+ page allocation
+
+---
+ kernel/vm.c | 35 +++++++++++++++++++++++++++++++----
+ 1 file changed, 31 insertions(+), 4 deletions(-)
+
+diff --git a/kernel/vm.c b/kernel/vm.c
+index 0a31802..c8ffb92 100644
+--- a/kernel/vm.c
++++ b/kernel/vm.c
+@@ -186,8 +186,19 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
+   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
+     if((pte = walk(pagetable, a, 0)) == 0)
+       panic("uvmunmap: walk");
+-    if((*pte & PTE_V) == 0)
+-      panic("uvmunmap: not mapped");
++    if((*pte & PTE_V) == 0){
++    // In demand paging, a virtual page can be part of the process size (sz)
++    // but not yet backed by physical RAM
++      if(*pte & PTE_LAZY){
++      /* If the valid bit is 0, this is a lazy page.
++       * which is untouched, thus page was never
++       * physically allocated we can simply continue
++       */
++        continue;
++      } else {
++        panic("uvmunmap: not mapped");
++      }
++    }
+     if(PTE_FLAGS(*pte) == PTE_V)
+       panic("uvmunmap: not a leaf");
+     if(do_free){
+@@ -320,8 +331,24 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
+   for(i = 0; i < sz; i += PGSIZE){
+     if((pte = walk(old, i, 0)) == 0)
+       panic("uvmcopy: pte should exist");
+-    if((*pte & PTE_V) == 0)
+-      panic("uvmcopy: page not present");
++    // In demand paging, a virtual page can be part of the process size (sz)
++    // but not yet backed by physical RAM
++    if((*pte & PTE_V) == 0){
++      /* If the valid bit is 0, this is a lazy page.
++       * Parent process is simply promised this memory
++       * which is not physically allocated yet.
++       * The child will eventually touch this address
++       * and trigger its own page fault and memory
++       * will be physically allocated
++       */
++
++       // check if page is actually lazy
++       if(*pte & PTE_LAZY){
++         continue;
++      } else {
++        panic("uvmcopy: page not present");
++      }
++    }
+     pa = PTE2PA(*pte);
+     flags = PTE_FLAGS(*pte);
+     if((mem = kalloc()) == 0)
+-- 
+2.53.0
+

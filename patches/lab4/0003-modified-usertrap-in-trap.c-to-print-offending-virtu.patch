@@ -1,0 +1,82 @@
+From d1af2360baed79fcfe99e3caa00fdf09f8926e60 Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 12:19:39 +0800
+Subject: [PATCH 03/11] modified usertrap in trap.c to print offending virtual
+ address when page faults
+
+---
+ kernel/trap.c | 22 +++++++++++++++-------
+ 1 file changed, 15 insertions(+), 7 deletions(-)
+
+diff --git a/kernel/trap.c b/kernel/trap.c
+index d454a7d..25cbaa8 100644
+--- a/kernel/trap.c
++++ b/kernel/trap.c
+@@ -46,10 +46,10 @@ usertrap(void)
+   w_stvec((uint64)kernelvec);
+ 
+   struct proc *p = myproc();
+-  
++
+   // save user program counter.
+   p->trapframe->epc = r_sepc();
+-  
++
+   if(r_scause() == 8){
+     // system call
+ 
+@@ -67,7 +67,15 @@ usertrap(void)
+     syscall();
+   } else if((which_dev = devintr()) != 0){
+     // ok
+-  } else {
++    // print virtual address which caused the user page fault
++    // when page fault happens cpu writes virtual address that failed into
++    // supervisor trap value stval register
++  } else if(r_scause() == 13 || r_scause() == 15) {
++    printf("User page fault detected, offending virtual address: %p\n",
++    (void *)r_stval());
++    p->killed = 1;
++  }
++    else {
+     printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
+     printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
+     setkilled(p);
+@@ -109,7 +117,7 @@ usertrapret(void)
+ 
+   // set up the registers that trampoline.S's sret will use
+   // to get to user space.
+-  
++
+   // set S Previous Privilege mode to User.
+   unsigned long x = r_sstatus();
+   x &= ~SSTATUS_SPP; // clear SPP to 0 for user mode
+@@ -122,7 +130,7 @@ usertrapret(void)
+   // tell trampoline.S the user page table to switch to.
+   uint64 satp = MAKE_SATP(p->pagetable);
+ 
+-  // jump to userret in trampoline.S at the top of memory, which 
++  // jump to userret in trampoline.S at the top of memory, which
+   // switches to the user page table, restores user registers,
+   // and switches to user mode with sret.
+   uint64 trampoline_userret = TRAMPOLINE + (userret - trampoline);
+@@ -131,14 +139,14 @@ usertrapret(void)
+ 
+ // interrupts and exceptions from kernel code go here via kernelvec,
+ // on whatever the current kernel stack is.
+-void 
++void
+ kerneltrap()
+ {
+   int which_dev = 0;
+   uint64 sepc = r_sepc();
+   uint64 sstatus = r_sstatus();
+   uint64 scause = r_scause();
+-  
++
+   if((sstatus & SSTATUS_SPP) == 0)
+     panic("kerneltrap: not from supervisor mode");
+   if(intr_get() != 0)
+-- 
+2.53.0
+

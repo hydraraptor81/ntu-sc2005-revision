@@ -1,0 +1,109 @@
+From f7812c829594c3aa618a44cc4244e4dcf7d6522c Mon Sep 17 00:00:00 2001
+From: Hwee Ren <hr@hweeren.com>
+Date: Mon, 20 Apr 2026 14:57:31 +0800
+Subject: [PATCH 10/11] added test files
+
+---
+ user/countpp_test.c | 14 ++++++++++++++
+ user/countvp_test.c | 14 ++++++++++++++
+ user/lazytest.c     | 46 +++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 74 insertions(+)
+ create mode 100644 user/countpp_test.c
+ create mode 100644 user/countvp_test.c
+ create mode 100644 user/lazytest.c
+
+diff --git a/user/countpp_test.c b/user/countpp_test.c
+new file mode 100644
+index 0000000..ac9aef1
+--- /dev/null
++++ b/user/countpp_test.c
+@@ -0,0 +1,14 @@
++#include "kernel/types.h"
++#include "user/user.h"
++
++int
++main(int argc, char *argv[])
++{
++  int pp_count;
++
++  pp_count = countpp();
++
++  printf("Current process physical page count: %d\n", pp_count);
++
++  exit(0);
++}
+diff --git a/user/countvp_test.c b/user/countvp_test.c
+new file mode 100644
+index 0000000..affe4a1
+--- /dev/null
++++ b/user/countvp_test.c
+@@ -0,0 +1,14 @@
++#include "kernel/types.h"
++#include "user/user.h"
++
++int
++main(int argc, char *argv[])
++{
++  int vp_count;
++
++  vp_count = countvp();
++
++  printf("Current process virtual page count: %d\n", vp_count);
++
++  exit(0);
++}
+diff --git a/user/lazytest.c b/user/lazytest.c
+new file mode 100644
+index 0000000..6a9545a
+--- /dev/null
++++ b/user/lazytest.c
+@@ -0,0 +1,46 @@
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++
++int
++main(int argc, char *argv[])
++{
++  int pages_to_alloc = 30;
++
++  // number of physical pages before
++  int before = countpp();
++  printf("Physical pages before sbrk() :%d\n", before);
++
++  // Request for 30 pages of memory
++  char *heap = sbrk(PGSIZE * pages_to_alloc);
++  if(heap == (char*)-1){
++    printf("sbrk failed\n");
++    exit(1);
++  }
++
++  int between = countpp();
++  printf("Physical pages after sbrk() before physically allocating: %d\n", between);
++
++  if(between > before + 2){
++    printf("Kernel is still using eager allocation\n");
++  } else {
++    printf("Kernel is using lazy allocation\n");
++  }
++
++  printf("\nTouching memory to force page faults\n");
++  for(int i = 0; i < pages_to_alloc; i++){
++    heap[i *PGSIZE] = '8';
++  }
++
++  int after = countpp();;
++  printf("Physical pages after touching all memory :%d\n", after);
++
++  if(after >= before + pages_to_alloc){
++    printf("Physical pages increased by %d\n", after - before);
++  } else {
++    printf("Physical pages were not properly allocated on demand");
++  }
++
++  exit(0);
++
++}
+-- 
+2.53.0
+
