@@ -1,0 +1,62 @@
+(gdb) file user/_uthread_test
+Reading symbols from user/_uthread_test...
+(gdb) b uthread.c:80
+Breakpoint 1 at 0xb5e: file user/uthread.c, line 80.
+(gdb) c
+Continuing.
+
+Thread 1 hit Breakpoint 1, thread_schedule () at user/uthread.c:80
+80          thread_switch(&t->context, &current_thread->context);
+(gdb) c
+Continuing.
+
+Thread 1 hit Breakpoint 1, thread_schedule () at user/uthread.c:80
+80          thread_switch(&t->context, &current_thread->context);
+(gdb) p/x *next_thread
+$1 = {stack = {0x0 <repeats 8192 times>}, state = 0x1, context = {ra = 0xa4, sp = 0x8130, s0 = 0x0, s1 = 0x0,
+    s2 = 0x0, s3 = 0x0, s4 = 0x0, s5 = 0x0, s6 = 0x0, s7 = 0x0, s8 = 0x0, s9 = 0x0, s10 = 0x0, s11 = 0x0}}
+(gdb) x/20x next_thread->stack
+0x6130 <all_thread+16624>:      0x00000000      0x00000000      0x00000000      0x00000000
+0x6140 <all_thread+16640>:      0x00000000      0x00000000      0x00000000      0x00000000
+0x6150 <all_thread+16656>:      0x00000000      0x00000000      0x00000000      0x00000000
+0x6160 <all_thread+16672>:      0x00000000      0x00000000      0x00000000      0x00000000
+0x6170 <all_thread+16688>:      0x00000000      0x00000000      0x00000000      0x00000000
+(gdb) c
+Continuing.
+
+Thread 1 hit Breakpoint 1, thread_schedule () at user/uthread.c:80
+80          thread_switch(&t->context, &current_thread->context);
+(gdb) c
+Continuing.
+
+Thread 1 hit Breakpoint 1, thread_schedule () at user/uthread.c:80
+80          thread_switch(&t->context, &current_thread->context);
+(gdb) c
+Continuing.
+
+Thread 1 hit Breakpoint 1, thread_schedule () at user/uthread.c:80
+80          thread_switch(&t->context, &current_thread->context);
+(gdb) c
+Continuing.
+
+Thread 1 hit Breakpoint 1, thread_schedule () at user/uthread.c:80
+80          thread_switch(&t->context, &current_thread->context);
+(gdb) x/20x next_thread->stack
+0x81a8 <all_thread+24936>:      0x00000000      0x00000000      0x00000000      0x00000000
+0x81b8 <all_thread+24952>:      0x00000000      0x00000000      0x00000000      0x00000000
+0x81c8 <all_thread+24968>:      0x00000000      0x00000000      0x00000000      0x00000000
+0x81d8 <all_thread+24984>:      0x00000000      0x00000000      0x00000000      0x00000000
+0x81e8 <all_thread+25000>:      0x00000000      0x00000000      0x00000000      0x00000000
+(gdb) b thread_switch
+Breakpoint 2 at 0xc3e
+(gdb) c
+Continuing.
+
+Thread 1 hit Breakpoint 2, 0x0000000000000c3e in thread_switch ()
+=> 0x0000000000000c3e <thread_switch+0>:        00153023                sd      ra,0(a0)
+(gdb) si
+0x0000000000000c42 in thread_switch ()
+=> 0x0000000000000c42 <thread_switch+4>:        00253423                sd      sp,8(a0)
+(gdb) delete breakpoints
+(gdb) c
+Continuing.
